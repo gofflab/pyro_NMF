@@ -67,3 +67,39 @@ class CoGAPSModel(PyroModule):
 
         with pyro.plate("data", self.num_genes):
             pyro.sample("obs", dist.Normal(prediction, torch.ones_like(prediction)).to_event(1), obs=D)
+
+#This does not work yet
+class CoGAPSModelWithAtomicPriorGibbs(PyroModule):
+    def __init__(self, D, num_patterns, lA, lP, num_atoms_A, num_atoms_P, device=torch.device('cpu')):
+        super().__init__()
+        self.device = device
+        self.num_genes = D.shape[0]
+        self.num_samples = D.shape[1]
+        self.num_patterns = num_patterns
+        self.lA = lA
+        self.lP = lP
+        self.num_atoms_A = num_atoms_A
+        self.num_atoms_P = num_atoms_P
+
+        # Initialize coordinates of atoms in the atomic domain for matrices A and P
+        self.atom_coordinates_A = PyroParam(torch.rand((self.num_genes, self.num_patterns, self.num_atoms_A), device=self.device))
+        self.atom_coordinates_P = PyroParam(torch.rand((self.num_patterns, self.num_samples, self.num_atoms_P), device=self.device))
+
+    def forward(self, D):
+        # Sample the value of each matrix element of A and P
+        A = self.sample_matrix_elements(self.atom_coordinates_A, self.lA)
+        P = self.sample_matrix_elements(self.atom_coordinates_P, self.lP)
+
+        prediction = torch.matmul(A, P)
+
+        with pyro.plate("data", self.num_genes):
+            pyro.sample("obs", dist.Normal(prediction, torch.ones_like(prediction)).to_event(1), obs=D)
+
+    def sample_matrix_elements(self, atom_coordinates, rate):
+        # Sample the value of each matrix element by summing over the corresponding atoms
+        matrix_elements = torch.zeros((atom_coordinates.shape[0], atom_coordinates.shape[1], 1), device=self.device)
+        for i in range(atom_coordinates.shape[0]):
+            for j in range(atom_coordinates.shape[1]):
+                for k in range(atom_coordinates.shape[2]):
+                    matrix_elements[i, j, 0] += torch.exp(-atom_coordinates[i, j, k] * rate)
+        return matrix_elements

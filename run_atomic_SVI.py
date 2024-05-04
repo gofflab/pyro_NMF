@@ -3,20 +3,16 @@
 import torch
 import pyro
 import pyro.optim
-from cogaps.model import CoGAPSModel
-from cogaps.guide import CoGAPSGuide
+from cogaps.model import CoGAPSModel, CoGAPSModelWithAtomicPriorGibbs
+from cogaps.guide import CoGAPSGuide, CoGAPSGuideWithAtomicPriorGibbs
 from cogaps.utils import generate_test_data
 import pyro.poutine as poutine
 from datetime import datetime
 
-#%% Import tensorboard & setup writer
-from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter()
-
 # Define the dimensions of the data and the latent space
-num_genes = 5000
-num_samples = 10000
-num_patterns = 50
+num_genes = 10
+num_samples = 5
+num_patterns = 2
 
 # Set device
 if torch.backends.mps.is_available():
@@ -37,7 +33,13 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 1000
+num_steps = 6000
+
+# Setup the atomic prior parameters
+lA = 0.1
+lP = 0.1
+num_atoms_A = 100
+num_atoms_P = 100
 
 # Use the Adam optimizer
 optimizer = pyro.optim.Adam({"lr": 0.05})
@@ -46,14 +48,14 @@ optimizer = pyro.optim.Adam({"lr": 0.05})
 loss_fn = pyro.infer.Trace_ELBO()
 
 #%% Instantiate the model
-model = CoGAPSModel(D, num_patterns, device=device)
+model = CoGAPSModelWithAtomicPriorGibbs(D, num_patterns, lA, lP, num_atoms_A, num_atoms_P, device=device)
 
 #%% Instantiate the guide
-guide = CoGAPSGuide(D, num_patterns, device=device)
+guide = CoGAPSGuideWithAtomicPriorGibbs(D, num_patterns, lA, lP, num_atoms_A, num_atoms_P, device=device)
 
 #%% Define the inference algorithm
-svi = pyro.infer.SVI(model=model,
-                    guide=guide,
+svi = pyro.infer.SVI(model=model.forward,
+                    guide=guide.forward,
                     optim=optimizer,
                     loss=loss_fn)
 
@@ -65,9 +67,6 @@ svi = pyro.infer.SVI(model=model,
 #%% Run inference
 for step in range(num_steps):
     loss = svi.step(D)
-    if step % 10 == 0:
-        writer.add_scalar("Loss/train", loss, step)
-        writer.flush()
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
@@ -82,6 +81,4 @@ print("Inferred P shape:", P_scale.shape)
 # End timer
 print("Time taken:")
 print(datetime.now() - startTime)
-
 # %%
-writer.flush()
