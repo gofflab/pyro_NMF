@@ -37,11 +37,13 @@ class CoGAPSGuide(PyroModule):
         self.init_vals = self.init_vals.expand(-1, self.num_patterns)
 
         # Define parameters for the guide
-        self.A_loc = PyroParam(torch.randn((self.num_genes, self.num_patterns), device=self.device)*0.1)
+        #TODO: Set A_loc constraint to be positive
+        self.A_loc = PyroParam(torch.randn((self.num_genes, self.num_patterns), device=self.device))
+        #TODO: Set P_loc constraint to be positive
         #self.A_scale_guide = PyroParam(torch.full((self.num_genes, self.num_patterns), self.initial_scale, device=self.device), constraint=dist.constraints.positive)
         self.A_scale_guide = PyroParam(self.init_vals.to(self.device), constraint=dist.constraints.positive)
 
-        self.P_loc = PyroParam(torch.randn((self.num_patterns, self.num_samples), device=self.device)*0.1)
+        self.P_loc = PyroParam(torch.randn((self.num_patterns, self.num_samples), device=self.device))
         #self.P_scale_guide = PyroParam(torch.full((self.num_patterns, self.num_samples), self.initial_scale, device=self.device), constraint=dist.constraints.positive)
         self.P_scale_guide = PyroParam(torch.ones((self.num_patterns, self.num_samples), device=self.device), constraint=dist.constraints.positive)
         

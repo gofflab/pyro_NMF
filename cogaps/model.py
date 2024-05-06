@@ -4,6 +4,7 @@ import pyro.distributions as dist
 from torch import nn
 from pyro.nn import PyroModule
 from pyro.nn.module import PyroParam
+from torch.nn.functional import softplus
 
 
 #%% Enable Validations
@@ -52,54 +53,69 @@ class CoGAPSModel(PyroModule):
         
         # Define parameters
         #self.A_scale = PyroParam(torch.full((self.num_genes, self.num_patterns), self.initial_scale, device=self.device), constraint=dist.constraints.positive)
-        self.A_scale = PyroParam(self.init_vals.to(device), constraint=dist.constraints.positive)
+        #self.A_scale = PyroParam(self.init_vals.to(device), constraint=dist.constraints.positive)
         #self.P_scale = PyroParam(torch.full((self.num_patterns, self.num_samples), self.initial_scale, device=self.device), constraint=dist.constraints.positive)
-        self.P_scale = PyroParam(torch.ones((self.num_patterns, self.num_samples), device=self.device), constraint=dist.constraints.positive)
-        
+        #self.P_scale = PyroParam(torch.ones((self.num_patterns, self.num_samples), device=self.device), constraint=dist.constraints.positive)
+        self.A_scale = PyroParam(torch.tensor(1.0, device=device), constraint=dist.constraints.positive)
+        self.P_scale = PyroParam(torch.tensor(1.0, device=device), constraint=dist.constraints.positive)
+
     def forward(self, D):
         with pyro.plate("genes", self.num_genes):
-            A = pyro.sample("A", dist.Exponential(rate=self.A_scale).to_event(1))
+            A = pyro.sample("A", dist.Exponential(rate=self.A_scale).expand([self.num_genes, self.num_patterns]).to_event(1))
 
         with pyro.plate("patterns", self.num_patterns):
-            P = pyro.sample("P", dist.Exponential(rate=self.P_scale).to_event(1))
+            P = pyro.sample("P", dist.Exponential(rate=self.P_scale).expand([self.num_patterns, self.num_samples]).to_event(1))
 
         prediction = torch.matmul(A, P)
 
         with pyro.plate("data", self.num_genes):
             pyro.sample("obs", dist.Normal(prediction, torch.ones_like(prediction)).to_event(1), obs=D)
+        
+        return prediction
 
-#This does not work yet
-class CoGAPSModelWithAtomicPriorGibbs(PyroModule):
-    def __init__(self, D, num_patterns, lA, lP, num_atoms_A, num_atoms_P, device=torch.device('cpu')):
+# Starting below from scratch
+#%%
+class ProbNMFModel(PyroModule):
+    def __init__(self, D, num_patterns, device=torch.device('cpu')):
         super().__init__()
         self.device = device
         self.num_genes = D.shape[0]
         self.num_samples = D.shape[1]
         self.num_patterns = num_patterns
-        self.lA = lA
-        self.lP = lP
-        self.num_atoms_A = num_atoms_A
-        self.num_atoms_P = num_atoms_P
+        self.D_gene_means = D.mean(axis=1)
+        self.D_mean = D.mean()
+        self.num_patterns = num_patterns
 
-        # Initialize coordinates of atoms in the atomic domain for matrices A and P
-        self.atom_coordinates_A = PyroParam(torch.rand((self.num_genes, self.num_patterns, self.num_atoms_A), device=self.device))
-        self.atom_coordinates_P = PyroParam(torch.rand((self.num_patterns, self.num_samples, self.num_atoms_P), device=self.device))
-
+        # Initialize scale parameters to 10% of each gene's mean
+        self.initial_scale = 0.1 * self.D_gene_means
+        self.init_vals = self.initial_scale.unsqueeze(-1)
+        self.init_vals = self.init_vals.expand(-1, self.num_patterns)
+        #Clamp to min of 0.01
+        self.init_vals = torch.clamp(self.init_vals, min=0.01)
+        
+        
+        # Define parameters
+        #self.A_mean = PyroParam(torch.rand((self.num_genes, self.num_patterns), device=self.device),constraint=dist.constraints.positive)
+        self.A_mean = PyroParam(self.init_vals.to(device), constraint=dist.constraints.positive)
+        self.A_scale = PyroParam(torch.ones((self.num_genes, self.num_patterns), device=self.device))
+        
+        self.P_mean = PyroParam(torch.rand((self.num_patterns, self.num_samples), device=self.device),constraint=dist.constraints.positive)
+        self.P_scale = PyroParam(torch.ones((self.num_patterns, self.num_samples), device=self.device))
+        
     def forward(self, D):
-        # Sample the value of each matrix element of A and P
-        A = self.sample_matrix_elements(self.atom_coordinates_A, self.lA)
-        P = self.sample_matrix_elements(self.atom_coordinates_P, self.lP)
-
-        prediction = torch.matmul(A, P)
-
-        with pyro.plate("data", self.num_genes):
-            pyro.sample("obs", dist.Normal(prediction, torch.ones_like(prediction)).to_event(1), obs=D)
-
-    def sample_matrix_elements(self, atom_coordinates, rate):
-        # Sample the value of each matrix element by summing over the corresponding atoms
-        matrix_elements = torch.zeros((atom_coordinates.shape[0], atom_coordinates.shape[1], 1), device=self.device)
-        for i in range(atom_coordinates.shape[0]):
-            for j in range(atom_coordinates.shape[1]):
-                for k in range(atom_coordinates.shape[2]):
-                    matrix_elements[i, j, 0] += torch.exp(-atom_coordinates[i, j, k] * rate)
-        return matrix_elements
+        # Priors
+        genes_plate = pyro.plate("Genes", self.num_genes, dim=-2)
+        patterns_plate = pyro.plate("Patterns", self.num_patterns, dim=-3)
+        
+        with genes_plate:
+            A = pyro.sample("A", dist.Normal(self.A_mean, self.A_scale).to_event(1))
+            
+        with patterns_plate:
+            P = pyro.sample("P", dist.Normal(self.P_mean, self.P_scale).to_event(1))
+            
+        # Likelihood
+        #with pyro.plate("data", self.num_genes):
+        with genes_plate:
+            with patterns_plate:
+                prediction = torch.matmul(A, P)
+                pyro.sample("D", dist.Normal(softplus(prediction),torch.ones_like(prediction)).to_event(1), obs=D)
