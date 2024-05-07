@@ -5,6 +5,7 @@ from torch import nn
 from pyro.nn import PyroModule
 from pyro.nn.module import PyroParam
 from torch.nn.functional import softplus
+from pyro.distributions import lkj
 
 
 #%% Enable Validations
@@ -83,7 +84,7 @@ class ProbNMFModel(PyroModule):
         self.num_samples = D.shape[1]
         self.num_patterns = num_patterns
         self.D_gene_means = D.mean(axis=1)
-        self.D_mean = D.mean()
+        #self.D_mean = D.mean()
         self.num_patterns = num_patterns
 
         # Initialize scale parameters to 10% of each gene's mean
@@ -102,6 +103,8 @@ class ProbNMFModel(PyroModule):
         self.P_mean = PyroParam(torch.rand((self.num_patterns, self.num_samples), device=self.device),constraint=dist.constraints.positive)
         self.P_scale = PyroParam(torch.ones((self.num_patterns, self.num_samples), device=self.device))
         
+        #self.D_mean = PyroParam(torch.tensor(D.mean(), device=self.device))
+        
     def forward(self, D):
         # Priors
         genes_plate = pyro.plate("Genes", self.num_genes, dim=-2)
@@ -113,9 +116,11 @@ class ProbNMFModel(PyroModule):
         with patterns_plate:
             P = pyro.sample("P", dist.Normal(self.P_mean, self.P_scale).to_event(1))
             
+        prediction = torch.matmul(A, P)
         # Likelihood
         #with pyro.plate("data", self.num_genes):
         with genes_plate:
             with patterns_plate:
-                prediction = torch.matmul(A, P)
+                
                 pyro.sample("D", dist.Normal(softplus(prediction),torch.ones_like(prediction)).to_event(1), obs=D)
+        return prediction

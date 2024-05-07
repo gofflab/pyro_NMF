@@ -23,6 +23,9 @@ num_samples = 100
 num_patterns = 20
 
 # Set device
+# if torch.backends.cuda.is_available():
+#     device=torch.device('cuda')
+    
 if torch.backends.mps.is_available():
     device=torch.device('mps')
 else:
@@ -43,7 +46,7 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 5000
+num_steps = 500
 
 # Use the Adam optimizer
 optimizer = pyro.optim.Adam({"lr": 0.05})
@@ -95,39 +98,40 @@ for step in range(num_steps):
     if step % 10 == 0:
         writer.add_scalar("Loss/train", loss, step)
         writer.flush()
+        writer.add_image("Prediction", torch.matmul(model.A_mean.unsqueeze(0),model.P_mean.unsqueeze(0)), step)
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
-# #%% Retrieve the inferred parameters
-# A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
-# P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
-# A_loc = pyro.param("A_loc").detach().to('cpu').numpy()
-# P_loc = pyro.param("P_loc").detach().to('cpu').numpy()
+#%% Retrieve the inferred parameters
+A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
+P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
+A_mean = pyro.param("A_mean").detach().to('cpu').numpy()
+P_mean = pyro.param("P_mean").detach().to('cpu').numpy()
 
-# # Print the shapes of the inferred parameters
-# print("Inferred A shape:", A_scale.shape)
-# print("Inferred P shape:", P_scale.shape)
+# Print the shapes of the inferred parameters
+print("Inferred A shape:", A_mean.shape)
+print("Inferred P shape:", P_mean.shape)
 
-# #print("Inferred A:", A_scale)
-# #print("Inferred P:", P_scale)
+#print("Inferred A:", A_mean)
+#print("Inferred P:", P_mean)
 
-# # Draw A_true and A_shape using imgshow
-# import matplotlib.pyplot as plt
-# plt.figure()
-# plt.imshow(A_true)
-# plt.title("True A")
-# plt.colorbar()
-# plt.savefig("True_A.png")
+# Draw A_true and A_shape using imgshow
+import matplotlib.pyplot as plt
+plt.figure()
+plt.imshow(A_true)
+plt.title("True A")
+plt.colorbar()
+plt.savefig("True_A.png")
 
-# plt.figure()
-# plt.imshow(A_loc)
-# plt.title("Inferred A")
-# plt.colorbar()
-# plt.savefig("Inferred_A.png")
+plt.figure()
+plt.imshow(A_mean)
+plt.title("Inferred A")
+plt.colorbar()
+plt.savefig("Inferred_A.png")
 
-# # End timer
-# print("Time taken:")
-# print(datetime.now() - startTime)
+# End timer
+print("Time taken:")
+print(datetime.now() - startTime)
 
 # # %%
 # writer.flush()
