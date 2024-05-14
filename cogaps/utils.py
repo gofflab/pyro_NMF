@@ -1,4 +1,7 @@
 import torch
+import numpy as np
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 def generate_test_data(num_genes, num_samples, num_patterns, noise_level=0.1):
     # Generate random patterns and loadings with positive values
@@ -33,3 +36,41 @@ def generate_structured_test_data(num_genes, num_samples, num_patterns, noise_le
     noisy_data = true_data + noise
     
     return noisy_data, pattern_matrix, loading_matrix
+
+def initialize_inducing_points_with_pca(expression_data, spatial_coords, num_components, num_inducing_points):
+    # Standardize the expression data
+    scaler = StandardScaler()
+    data_standardized = scaler.fit_transform(expression_data)
+
+    # Perform PCA on the standardized expression data
+    pca = PCA(n_components=num_components)
+    principal_components = pca.fit_transform(data_standardized)
+
+    # Select indices with the highest absolute scores in the first principal component
+    extreme_indices = np.argsort(np.abs(principal_components[:, 0]))[-num_inducing_points:]
+
+    # Map these indices to select corresponding spatial coordinates
+    inducing_points = torch.tensor(spatial_coords[extreme_indices], dtype=torch.float)
+
+    return inducing_points
+
+def initialize_inducing_points_with_pca(expression_data, spatial_coords, num_components, num_inducing_points):
+    # Standardize the expression data
+    scaler = StandardScaler()
+    data_standardized = scaler.fit_transform(expression_data)
+
+    # Perform PCA on the standardized expression data
+    pca = PCA(n_components=num_components)
+    principal_components = pca.fit_transform(data_standardized)
+
+    # Select indices with the highest absolute scores in the first principal component
+    extreme_indices = np.argsort(np.abs(principal_components[:, 0]))[-num_inducing_points:]
+
+    # Select inducing points based on both expression data and spatial coordinates
+    inducing_points_expression = torch.tensor(data_standardized[extreme_indices], dtype=torch.float)
+    inducing_points_spatial = torch.tensor(spatial_coords[extreme_indices], dtype=torch.float)
+
+    # Concatenate inducing points from expression data and spatial coordinates
+    inducing_points = torch.cat((inducing_points_expression, inducing_points_spatial), dim=1)
+
+    return inducing_points

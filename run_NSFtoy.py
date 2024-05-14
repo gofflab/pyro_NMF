@@ -6,6 +6,7 @@ from datetime import datetime
 import anndata as ad
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 import pyro
 import pyro.optim
 import pyro.poutine as poutine
@@ -13,6 +14,7 @@ import scanpy as sc
 import seaborn as sns
 import torch
 from pyro.infer.autoguide import AutoNormal
+from torch.utils.data import DataLoader, TensorDataset
 
 from cogaps.guide import CoGAPSGuide
 from cogaps.model import ProbNMFModel
@@ -20,19 +22,41 @@ from cogaps.utils import generate_structured_test_data, generate_test_data
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
-
-
 #%% Plotting function
 ## designed in mind for the NSF toy data
 ## TODO move to utils -- tried but got error trying to import from utils
 def plot_grid(patterns, coords, nrows, ncols, savename = None):
     fig, axes = plt.subplots(nrows,ncols)
     num_patterns = patterns.shape[1]
+    #print(patterns.shape)
+    #print(coords['x'].sort_values().head(40))
+    x, y = coords['x'], coords['y']
+    # Determine the extent of the grid
+    x_min, x_max = np.min(x), np.max(x)
+    y_min, y_max = np.min(y), np.max(y)
+    resolution = 0.114286
+    x_grid = np.arange(x_min, x_max + resolution, resolution)
+    y_grid = np.arange(y_min, y_max + resolution, resolution)
+    
     i = 0
     for r in range(nrows):
         for c in range(ncols):
-            if i < num_patterns:
-                axes[r,c].scatter(coords['x'], coords['y'], c=patterns[:,i], cmap='viridis', s = 5)
+            if i < num_patterns:       
+                # Initialize an empty grid (NaN-filled)
+                grid = np.full((len(y_grid), len(x_grid)), np.nan)
+
+                # Map the patterns to the grid; find nearest grid indices for each x, y pair
+                ix = np.searchsorted(x_grid, x) - 1
+                iy = np.searchsorted(y_grid, y) - 1
+                
+                for j in range(len(patterns[:,i])):
+                    if 0 <= ix[j] < len(x_grid) and 0 <= iy[j] < len(y_grid):
+                        grid[iy[j], ix[j]] = patterns[j,i]
+                
+                axes[r,c].imshow(grid, cmap='viridis')
+                
+                # or use scatter plot
+                #axes[r,c].scatter(coords['x'], coords['y'], c=patterns[:,i], cmap='viridis', s = 5)
                 i += 1
     if savename != None:
         plt.savefig(savename)
@@ -81,6 +105,12 @@ else:
 # Move data to device
 D = D.to(device)
 
+# Create a DataLoader to handle batching and shuffling
+batch_size = 100
+num_epochs = 100
+dataset = TensorDataset(D)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
 #%% Clear Pyro's parameter store
 pyro.clear_param_store()
 
@@ -91,7 +121,8 @@ startTime = datetime.now()
 num_steps = 2000
 
 # Use the Adam optimizer
-optimizer = pyro.optim.Adam({"lr": 0.05})
+#optimizer = pyro.optim.Adam({"lr": 0.05})
+optimizer = pyro.optim.Adam({"lr": 0.25})
 
 # Define the loss function
 loss_fn = pyro.infer.Trace_ELBO()
@@ -134,17 +165,30 @@ svi = pyro.infer.SVI(model=model,
 # #trace.compute_log_prob()  # optional, but allows printing of log_prob shapes
 # #print(trace.format_shapes())
 
-#%% Run inference
-for step in range(num_steps):
-    loss = svi.step(D)
-    if step % 10 == 0:
-        writer.add_scalar("Loss/train", loss, step)
+for epoch in range(num_epochs):
+    for batch in dataloader:
+        D_batch = batch[0]
+        loss = svi.step(D_batch, batch_size)
+    if epoch % 10 == 0:
+        writer.add_scalar("Loss/train", loss, epoch)
         writer.flush()
-    if step % 50 == 0:
+    if epoch % 50 == 0:
         plot_grid(pyro.param("A_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
-        writer.add_figure("A_mean", plt.gcf(), step)
-    if step % 100 == 0:
-        print(f"Iteration {step}, ELBO loss: {loss}")
+        writer.add_figure("A_mean", plt.gcf(), epoch)
+    if epoch % 100 == 0:
+        print(f"Iteration {epoch}, ELBO loss: {loss}")
+
+#%% Run inference
+# for step in range(num_steps):
+#     loss = svi.step(D)
+#     if step % 10 == 0:
+#         writer.add_scalar("Loss/train", loss, step)
+#         writer.flush()
+#     if step % 50 == 0:
+#         plot_grid(pyro.param("A_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
+#         writer.add_figure("A_mean", plt.gcf(), step)
+#     if step % 100 == 0:
+#         print(f"Iteration {step}, ELBO loss: {loss}")
 
 #%% Retrieve the inferred parameters
 A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
