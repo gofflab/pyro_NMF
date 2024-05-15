@@ -13,7 +13,7 @@ import pyro.poutine as poutine
 import scanpy as sc
 import seaborn as sns
 import torch
-from pyro.infer.autoguide import AutoNormal
+from pyro.infer.autoguide import AutoNormal, AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
 from cogaps.guide import CoGAPSGuide
@@ -99,17 +99,19 @@ num_patterns = 4
 #     device=torch.device('cuda')
 if torch.backends.mps.is_available():
     device=torch.device('mps')
+elif torch.cuda.is_avaialble():
+    device=torch.device('cuda')
 else:
     device=torch.device('cpu')
+
+#device=torch.device('cpu')
 
 # Move data to device
 D = D.to(device)
 
-# Create a DataLoader to handle batching and shuffling
-batch_size = 100
-num_epochs = 100
+# Create a DataLoader to handle batching and shuffling (not implemented yet)
 dataset = TensorDataset(D)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
 
 #%% Clear Pyro's parameter store
 pyro.clear_param_store()
@@ -118,7 +120,7 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 2000
+num_steps = 1000
 
 # Use the Adam optimizer
 #optimizer = pyro.optim.Adam({"lr": 0.05})
@@ -145,8 +147,10 @@ pyro.render_model(model, model_args=(D,),
 #model.train()
 
 #%% Instantiate the guide
-# guide = CoGAPSGuide(D, num_patterns, device=device)
 guide = AutoNormal(model)
+#guide = AutoMultivariateNormal(model)
+#guide = AutoLowRankMultivariateNormal(model, rank=min(num_patterns, 10)) 
+#guide = AutoDiagonalNormal(model)
 
 # The code snippet `# #%% Define the inference algorithm
 # # svi = pyro.infer.SVI(model=model,
@@ -165,30 +169,17 @@ svi = pyro.infer.SVI(model=model,
 # #trace.compute_log_prob()  # optional, but allows printing of log_prob shapes
 # #print(trace.format_shapes())
 
-for epoch in range(num_epochs):
-    for batch in dataloader:
-        D_batch = batch[0]
-        loss = svi.step(D_batch, batch_size)
-    if epoch % 10 == 0:
-        writer.add_scalar("Loss/train", loss, epoch)
-        writer.flush()
-    if epoch % 50 == 0:
-        plot_grid(pyro.param("A_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
-        writer.add_figure("A_mean", plt.gcf(), epoch)
-    if epoch % 100 == 0:
-        print(f"Iteration {epoch}, ELBO loss: {loss}")
-
 #%% Run inference
-# for step in range(num_steps):
-#     loss = svi.step(D)
-#     if step % 10 == 0:
-#         writer.add_scalar("Loss/train", loss, step)
-#         writer.flush()
-#     if step % 50 == 0:
-#         plot_grid(pyro.param("A_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
-#         writer.add_figure("A_mean", plt.gcf(), step)
-#     if step % 100 == 0:
-#         print(f"Iteration {step}, ELBO loss: {loss}")
+for step in range(num_steps):
+    loss = svi.step(D)
+    if step % 10 == 0:
+        writer.add_scalar("Loss/train", loss, step)
+        writer.flush()
+    if step % 50 == 0:
+        plot_grid(pyro.param("A_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
+        writer.add_figure("A_mean", plt.gcf(), step)
+    if step % 100 == 0:
+        print(f"Iteration {step}, ELBO loss: {loss}")
 
 #%% Retrieve the inferred parameters
 A_scale = pyro.param("A_scale").detach().to('cpu').numpy()

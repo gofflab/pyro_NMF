@@ -76,7 +76,12 @@ class CoGAPSModel(PyroModule):
 # Starting below from scratch
 #%%
 class ProbNMFModel(PyroModule):
-    def __init__(self, D, num_patterns, device=torch.device('cpu'),svd_init=False):
+    def __init__(self, 
+                 D, 
+                 num_patterns, 
+                 device=torch.device('cpu'),
+                 init_method="mean", # Options: (["mean", "svd", None]):
+            ):
         super().__init__()
         self.device = device
         self.D = D
@@ -91,9 +96,11 @@ class ProbNMFModel(PyroModule):
         #self.D_mean = D.mean()
         self.num_patterns = num_patterns
 
-        if svd_init:
-            self.initial_A_mean, self.initial_P_mean = self.nnsvd_initialization(self.D, self.num_patterns)
-        else:
+        if init_method == "svd":
+            #self.initial_A_mean, self.initial_P_mean = self.nnsvd_initialization(self.D, self.num_patterns)
+            _, self.initial_P_mean = self.nnsvd_initialization(self.D, self.num_patterns)
+            self.initial_A_mean = torch.rand((self.num_genes, self.num_patterns), device=self.device)
+        elif init_method == "mean":
             # Initialize A_mean and P_mean to gene means and sample_means
             self.initial_A_mean = self.D_gene_means.unsqueeze(-1).expand(-1, self.num_patterns)
             #self.initial_A_mean = torch.full((self.num_genes,self.num_patterns),self.D_mean)
@@ -101,7 +108,10 @@ class ProbNMFModel(PyroModule):
             # Redefine initial_P_mean to sample means
             self.initial_P_mean = self.D_sample_means.unsqueeze(0).expand(self.num_patterns, -1)
             #self.initial_P_mean = torch.full((self.num_patterns,self.num_samples),self.D_mean)
-            
+        else:
+            self.initial_A_mean = torch.rand((self.num_genes, self.num_patterns), device=self.device)
+            self.initial_P_mean = torch.rand((self.num_patterns, self.num_samples), device=self.device)
+        
         # Initialize A_scale and P_scale parameters to gene and sample standard deviations
         self.initial_A_scale = self.D_gene_sd.unsqueeze(-1).expand(-1, self.num_patterns).clamp(min=0.01)
         self.initial_P_scale = self.D_sample_sd.unsqueeze(0).expand(self.num_patterns, -1).clamp(min=0.01)
@@ -161,6 +171,5 @@ class ProbNMFModel(PyroModule):
         #with pyro.plate("data", self.num_genes):
         with genes_plate:
             with patterns_plate:
-
                 pyro.sample("D", dist.Normal(softplus(prediction),torch.ones_like(prediction)).to_event(1), obs=D)
         return prediction
