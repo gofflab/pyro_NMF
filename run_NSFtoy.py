@@ -13,7 +13,7 @@ import pyro.poutine as poutine
 import scanpy as sc
 import seaborn as sns
 import torch
-from pyro.infer.autoguide import AutoNormal, AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
+from pyro.infer.autoguide import AutoNormal#, AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
 from cogaps.guide import CoGAPSGuide
