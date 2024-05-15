@@ -16,7 +16,7 @@ import torch
 from pyro.infer.autoguide import AutoNormal#, AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
-from cogaps.guide import CoGAPSGuide
+#from cogaps.guide import CoGAPSGuide
 from cogaps.model import ProbNMFModel
 from cogaps.utils import generate_structured_test_data, generate_test_data
 
