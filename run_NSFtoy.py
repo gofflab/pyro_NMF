@@ -5,15 +5,16 @@ from datetime import datetime
 
 import anndata as ad
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pyro
 import pyro.optim
 import pyro.poutine as poutine
 import scanpy as sc
 import seaborn as sns
 import torch
-from pyro.infer.autoguide import AutoNormal#, AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
+from pyro.infer.autoguide import \
+    AutoNormal  # , AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
 #from cogaps.guide import CoGAPSGuide
@@ -37,24 +38,24 @@ def plot_grid(patterns, coords, nrows, ncols, savename = None):
     resolution = 0.114286
     x_grid = np.arange(x_min, x_max + resolution, resolution)
     y_grid = np.arange(y_min, y_max + resolution, resolution)
-    
+
     i = 0
     for r in range(nrows):
         for c in range(ncols):
-            if i < num_patterns:       
+            if i < num_patterns:
                 # Initialize an empty grid (NaN-filled)
                 grid = np.full((len(y_grid), len(x_grid)), np.nan)
 
                 # Map the patterns to the grid; find nearest grid indices for each x, y pair
                 ix = np.searchsorted(x_grid, x) - 1
                 iy = np.searchsorted(y_grid, y) - 1
-                
+
                 for j in range(len(patterns[:,i])):
                     if 0 <= ix[j] < len(x_grid) and 0 <= iy[j] < len(y_grid):
                         grid[iy[j], ix[j]] = patterns[j,i]
-                
+
                 axes[r,c].imshow(grid, cmap='viridis')
-                
+
                 # or use scatter plot
                 #axes[r,c].scatter(coords['x'], coords['y'], c=patterns[:,i], cmap='viridis', s = 5)
                 i += 1
@@ -84,9 +85,9 @@ writer = SummaryWriter()
 ## Load in NSF toy data
 S1 = sc.read_h5ad('S1.h5ad')
 S1 = S1[:,:80] # based on NSF demo.ipynb
-A_true = pd.DataFrame(S1.obsm['spfac'])
-A_true.columns = ['True_' + str(i) for i in range(1, A_true.shape[1]+1)]
-D = torch.tensor(pd.DataFrame(S1.layers['counts']).values)
+P_true = pd.DataFrame(S1.obsm['spfac'])
+P_true.columns = ['True_' + str(i) for i in range(1, P_true.shape[1]+1)]
+D = torch.tensor(pd.DataFrame(S1.layers['counts']).values) # D should be sample by genes
 coords = pd.DataFrame(S1.obsm['spatial'])
 coords.columns = ['x', 'y']
 
@@ -99,8 +100,8 @@ num_patterns = 4
 #     device=torch.device('cuda')
 if torch.backends.mps.is_available():
     device=torch.device('mps')
-elif torch.cuda.is_avaialble():
-    device=torch.device('cuda')
+#elif torch.cuda.is_available():
+#    device=torch.device('cuda')
 else:
     device=torch.device('cpu')
 
@@ -120,7 +121,7 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 1000
+num_steps = 150
 
 # Use the Adam optimizer
 #optimizer = pyro.optim.Adam({"lr": 0.05})
@@ -149,7 +150,7 @@ pyro.render_model(model, model_args=(D,),
 #%% Instantiate the guide
 guide = AutoNormal(model)
 #guide = AutoMultivariateNormal(model)
-#guide = AutoLowRankMultivariateNormal(model, rank=min(num_patterns, 10)) 
+#guide = AutoLowRankMultivariateNormal(model, rank=min(num_patterns, 10))
 #guide = AutoDiagonalNormal(model)
 
 # The code snippet `# #%% Define the inference algorithm
@@ -176,8 +177,8 @@ for step in range(num_steps):
         writer.add_scalar("Loss/train", loss, step)
         writer.flush()
     if step % 50 == 0:
-        plot_grid(pyro.param("A_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
-        writer.add_figure("A_mean", plt.gcf(), step)
+        plot_grid(pyro.param("P_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
+        writer.add_figure("P_mean", plt.gcf(), step)
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
@@ -202,21 +203,22 @@ print("Time taken:")
 print(datetime.now() - startTime)
 
 # Plot the inferred patterns and true patterns
-plot_grid(A_true.values, coords, 2, 2, savename = 'True_A.png')
-plot_grid(A_mean, coords, 2, 2, savename = 'Inferred_A.png')
+plot_grid(P_true.values, coords, 2, 2, savename = 'True_P.png')
+plot_grid(P_mean, coords, 2, 2, savename = 'Inferred_P.png')
 
 # Save outputs
 plt.figure()
-plt.hist(A_true.values.flatten(), bins=30)
-plt.savefig('A_true_hist.png')
+plt.hist(P_true.values.flatten(), bins=30)
+plt.savefig('P_true_hist.png')
 
 plt.figure()
-plt.hist(A_mean.flatten(), bins=30)
-plt.savefig('A_mean_hist.png')
+plt.hist(P_mean.flatten(), bins=30)
+plt.savefig('P_mean_hist.png')
 
 # Check inferred parameters against the true parameters
-plot_correlations(A_true.values, A_mean, 'A_mean')
-writer.add_figure("A_mean_correlations", plt.gcf(), step)
+plot_correlations(P_true.values, P_mean, 'P_mean')
+writer.add_figure("P_mean_correlations", plt.gcf(), step)
 
 # # %%
 # writer.flush()
+# %%
