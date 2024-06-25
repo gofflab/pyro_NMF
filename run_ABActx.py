@@ -83,15 +83,17 @@ from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 
 ## Load in NSF toy data
-S1 = sc.read_h5ad('S1.h5ad')
-S1 = S1[:,:80] # based on NSF demo.ipynb
-P_true = pd.DataFrame(S1.obsm['spfac'])
-P_true.columns = ['True_' + str(i) for i in range(1, P_true.shape[1]+1)]
-D = torch.tensor(pd.DataFrame(S1.layers['counts']).values) # D should be sample by genes
-coords = pd.DataFrame(S1.obsm['spatial'])
-coords.columns = ['x', 'y']
+#S1 = sc.read_h5ad('S1.h5ad')
+#S1 = S1[:,:80] # based on NSF demo.ipynb
+#P_true = pd.DataFrame(S1.obsm['spfac'])
+#P_true.columns = ['True_' + str(i) for i in range(1, P_true.shape[1]+1)]
+#D = torch.tensor(pd.DataFrame(S1.layers['counts']).values) # D should be sample by genes
+#coords = pd.DataFrame(S1.obsm['spatial'])
+#coords.columns = ['x', 'y']
 
-num_patterns = 4
+CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
+D = torch.tensor(CTX_data.values)
+num_patterns = 12
 
 #plot_grid(A_true.values, coords, 2, 2, savename = 'patterns_heatmap.png')
 
@@ -114,7 +116,6 @@ D = D.to(device)
 dataset = TensorDataset(D)
 dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
 
-##### RUN BELOW HERE
 #%% Clear Pyro's parameter store
 pyro.clear_param_store()
 
@@ -122,27 +123,26 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 10000
+num_steps = 1000
 
 # Use the Adam optimizer
 #optimizer = pyro.optim.Adam({"lr": 0.05})
-optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-05}) # try default
+optimizer = pyro.optim.Adam({"lr": 0.1})
 
 # Define the loss function
 loss_fn = pyro.infer.Trace_ELBO()
 
 #%% Instantiate the model
 #model = CoGAPSModel(D, num_patterns, device=device)
-model = ProbNMFModel(D, num_patterns, device=device, init_method=None)
+model = ProbNMFModel(D, num_patterns, device=device)
 
 #%%
 # Inspect model
-## Doesn't work on SOB
-#pyro.render_model(model, model_args=(D,),
-#                render_params=True,
-#                render_distributions=True,
-#                #render_deterministic=True,
-#                filename="model.pdf")
+pyro.render_model(model, model_args=(D,),
+                render_params=True,
+                render_distributions=True,
+                #render_deterministic=True,
+                filename="model.pdf")
 
 #%% Logging model
 #model.eval()
@@ -178,30 +178,20 @@ for step in range(num_steps):
     if step % 10 == 0:
         writer.add_scalar("Loss/train", loss, step)
         writer.flush()
-    if step % 50 == 0:
-        plot_grid(pyro.param("P_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
-        writer.add_figure("P_mean", plt.gcf(), step)
-
-        plt.hist(pyro.param("P_mean").detach().to('cpu').numpy().flatten(), bins=30)
-        writer.add_figure("P_mean_hist", plt.gcf(), step)
-
-        plt.hist(pyro.param("A_mean").std(dim=0).detach().to('cpu').numpy(), bins=30)
-        writer.add_figure("A_mean std (gene stds)", plt.gcf(), step)
-
-        plt.hist(pyro.param("P_mean").std(dim=1).detach().to('cpu').numpy(), bins=30)
-        writer.add_figure("P_mean std (gene stds)", plt.gcf(), step)
-
+    #if step % 50 == 0:
+    #    plot_grid(pyro.param("P_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
+    #    writer.add_figure("P_mean", plt.gcf(), step)
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
 #%% Retrieve the inferred parameters
-#A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
-#P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
+A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
+P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
 A_mean = pyro.param("A_mean").detach().to('cpu').numpy()
 P_mean = pyro.param("P_mean").detach().to('cpu').numpy()
 
-#pd.DataFrame(A_scale).to_csv('A_scale.csv')
-#pd.DataFrame(P_scale).to_csv('P_scale.csv')
+pd.DataFrame(A_scale).to_csv('A_scale.csv')
+pd.DataFrame(P_scale).to_csv('P_scale.csv')
 pd.DataFrame(A_mean).to_csv('A_mean.csv')
 pd.DataFrame(P_mean).to_csv('P_mean.csv')
 
