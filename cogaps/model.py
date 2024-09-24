@@ -22,15 +22,14 @@ class ProbNMFModel(PyroModule):
         super().__init__()
         self.device = device
         self.D = D
-        self.num_genes = self.D.shape[1] # checked
-        self.num_samples = self.D.shape[0] # checked
+        self.num_genes = self.D.shape[1]
+        self.num_samples = self.D.shape[0]
         self.num_patterns = num_patterns
-        self.D_gene_means = self.D.mean(axis=0) # checked
-        self.D_mean = self.D.mean() # is this used ?
-        self.D_gene_sd = self.D.std(axis=0) # checked
-        self.D_sample_means = self.D.mean(axis=1) # checked
-        self.D_sample_sd = self.D.std(axis=1) # checked
-
+        self.D_gene_means = self.D.mean(axis=0)
+        self.D_mean = self.D.mean()
+        self.D_gene_sd = self.D.std(axis=0)
+        self.D_sample_means = self.D.mean(axis=1)
+        self.D_sample_sd = self.D.std(axis=1)
 
         #### A_mean should be patterns x genes ####
         #### P_mean should be samples x patterns ####
