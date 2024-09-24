@@ -100,10 +100,13 @@ num_patterns = 4
 #     device=torch.device('cuda')
 if torch.backends.mps.is_available():
     device=torch.device('mps')
+    print('using mps')
 elif torch.cuda.is_available():
     device=torch.device('cuda')
+    print('using cuda')
 else:
     device=torch.device('cpu')
+    print('using cpu')
 
 #device=torch.device('cpu')
 
@@ -122,11 +125,11 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 10000
+num_steps = 500
 
 # Use the Adam optimizer
 #optimizer = pyro.optim.Adam({"lr": 0.05})
-optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-05}) # try default
+optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # try default
 
 # Define the loss function
 loss_fn = pyro.infer.Trace_ELBO()

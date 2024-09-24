@@ -1,3 +1,4 @@
+#%%
 import pyro
 import pyro.distributions as dist
 import torch
@@ -203,7 +204,7 @@ class ProbNMFModel(PyroModule):
 
         with patterns_plate:
             P = pyro.sample("P", dist.Gamma(self.P_mean, 1/self.P_scale).to_event(1)) # try switching to gamma?
-
+        print('step')
         prediction = torch.matmul(P, A)#+self.sigma
         # Likelihood
         #with pyro.plate("data", self.num_genes):
@@ -211,3 +212,4 @@ class ProbNMFModel(PyroModule):
             with patterns_plate:
                 pyro.sample("D", dist.Normal(softplus(prediction),torch.ones_like(prediction)).to_event(1), obs=D)
         return prediction
+# %%
