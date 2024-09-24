@@ -107,6 +107,7 @@ elif torch.cuda.is_available():
 else:
     device=torch.device('cpu')
     print('using cpu')
+device=torch.device('cpu')
 
 #device=torch.device('cpu')
 
@@ -138,42 +139,16 @@ loss_fn = pyro.infer.Trace_ELBO()
 #model = CoGAPSModel(D, num_patterns, device=device)
 model = ProbNMFModel(D, num_patterns, device=device, init_method=None)
 
-#%%
-# Inspect model
-## Doesn't work on SOB
-#pyro.render_model(model, model_args=(D,),
-#                render_params=True,
-#                render_distributions=True,
-#                #render_deterministic=True,
-#                filename="model.pdf")
-
-#%% Logging model
-#model.eval()
-#writer.add_graph(model,D)
-#model.train()
 
 #%% Instantiate the guide
 guide = AutoNormal(model)
-#guide = AutoMultivariateNormal(model)
-#guide = AutoLowRankMultivariateNormal(model, rank=min(num_patterns, 10))
-#guide = AutoDiagonalNormal(model)
 
-# The code snippet `# #%% Define the inference algorithm
-# # svi = pyro.infer.SVI(model=model,
-# #                     guide=guide,
-# #                     optim=optimizer,
-# #                     loss=loss_fn)` is defining the Stochastic Variational Inference (SVI)
-# algorithm in Pyro.
 #%% Define the inference algorithm
 svi = pyro.infer.SVI(model=model,
                     guide=guide,
                     optim=optimizer,
                     loss=loss_fn)
 
-# #%% Trace
-# #trace = poutine.trace(model(D)).get_trace()
-# #trace.compute_log_prob()  # optional, but allows printing of log_prob shapes
-# #print(trace.format_shapes())
 
 #%% Run inference
 for step in range(num_steps):
@@ -236,4 +211,3 @@ writer.add_figure("P_mean_correlations", plt.gcf(), step)
 
 # # %%
 # writer.flush()
-# %%
