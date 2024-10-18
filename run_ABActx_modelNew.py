@@ -65,10 +65,10 @@ writer = SummaryWriter()
 
 #CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
 ABA_data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
-#ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
-D = torch.tensor(ABA_data.X)
-coords = ABA_data.obs.loc[:,['x','y']]
-num_patterns = 12
+ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
+D = torch.tensor(ISO_data.X)
+coords = ISO_data.obs.loc[:,['x','y']]
+num_patterns = 6
 
 if torch.backends.mps.is_available():
     device=torch.device('mps')
@@ -95,7 +95,7 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 10000
+num_steps = 1000
 
 # Use the Adam optimizer
 optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # try default
@@ -125,14 +125,14 @@ for step in range(num_steps):
         writer.add_scalar("Loss/train", loss, step)
         writer.flush()
     if step % 50 == 0:
-        plot_grid(pyro.param("scale_P").detach().to('cpu').numpy(), coords, 3, 4, savename = None)
-        writer.add_figure("scale_P", plt.gcf(), step)
+        plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, 2, 3, savename = None)
+        writer.add_figure("loc_P", plt.gcf(), step)
 
-        plt.hist(pyro.param("scale_P").detach().to('cpu').numpy().flatten(), bins=30)
-        writer.add_figure("scale_P_hist", plt.gcf(), step)
+        plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
+        writer.add_figure("loc_P_hist", plt.gcf(), step)
 
-        plt.hist(pyro.param("scale_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
-        writer.add_figure("scale_A std (gene stds)", plt.gcf(), step)
+        plt.hist(pyro.param("loc_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
+        writer.add_figure("loc_A std (gene stds)", plt.gcf(), step)
 
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")

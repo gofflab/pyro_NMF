@@ -46,25 +46,25 @@ class GammaMatrixFactorization(PyroModule):
 
         # Matrix A (patterns x genes)
         #self.scale_A = PyroParam(torch.ones(num_patterns, num_genes), constraint=dist.constraints.positive)  # learnable scale
-        self.scale_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device), constraint=dist.constraints.positive)  # learnable scale
-        self.loc_A = PyroParam(torch.ones(self.num_patterns, self.num_genes, device=self.device),constraint=dist.constraints.positive)    # learnable loc
+        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device), constraint=dist.constraints.positive)  # loc is mean for normal
+        self.scale_A = PyroParam(torch.ones(self.num_patterns, self.num_genes, device=self.device),constraint=dist.constraints.positive)    # scale is std for normal
 
         # Matrix P (samples x patterns)
         #self.scale_P = PyroParam(torch.ones(num_samples, num_patterns),constraint=dist.constraints.positive)  # learnable scale
-        self.scale_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)  # learnable scale
-        self.loc_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)    # learnable loc
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)  # loc is mean for normal
+        self.scale_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)    # scale is std for normal
 
 
     def forward(self, D):
         # Nested plates for pixel-wise independence?
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
-                A = pyro.sample("A", dist.Gamma(self.scale_A, self.loc_A))
+                A = pyro.sample("A", dist.Gamma(self.loc_A, self.scale_A))
 
         # Nested plates for pixel-wise independence?
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
-                P = pyro.sample("P", dist.Gamma(self.scale_P, self.loc_P))
+                P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale_P))
 
         # Reconstruct D as the product of P and A
         D_reconstructed = torch.matmul(P, A)  # (samples x genes) # move soft plus up here? KW TODO
