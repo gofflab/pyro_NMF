@@ -67,12 +67,15 @@ class GammaMatrixFactorization(PyroModule):
                 P = pyro.sample("P", dist.Gamma(self.scale_P, self.loc_P))
 
         # Reconstruct D as the product of P and A
-        D_reconstructed = torch.matmul(P, A)  # (samples x genes)
+        D_reconstructed = torch.matmul(P, A)  # (samples x genes) # move soft plus up here? KW TODO
 
         # Model the data D as being Normal distributed around the reconstructed D
-        pyro.sample("D", dist.Normal(softplus(D_reconstructed),torch.ones_like(D_reconstructed)).to_event(2), obs=D)
+        # normal? Try saving D at every step
+        # compare sample reconstructed to previous step to see whats changing?
+        #print("no return")
+        pyro.sample("D", dist.Normal(softplus(D_reconstructed),torch.ones_like(D_reconstructed)).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
 
-        return D_reconstructed
+        #return D_reconstructed
 
 def guide(D):
     pass
