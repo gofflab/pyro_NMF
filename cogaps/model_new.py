@@ -54,8 +54,8 @@ class GammaMatrixFactorization(PyroModule):
         self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)  # loc is mean for normal
         self.scale_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)    # scale is std for normal
 
-        self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.positive)
-        #self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.interval(0.1, 18)) #  max SD of a gene from data
+        #self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.positive)
+        self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.interval(0.1, 18)) # hardcoded as max SD of a gene from input data
         #self.D_reconstructed = torch.ones(self.num_samples, self.num_genes, device=self.device)
         #self.D_sampled = torch.ones(self.num_samples, self.num_genes, device=self.device)
 
