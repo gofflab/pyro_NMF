@@ -54,6 +54,10 @@ class GammaMatrixFactorization(PyroModule):
         self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)  # loc is mean for normal
         self.scale_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)    # scale is std for normal
 
+        self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.positive)
+        #self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.interval(0.1, 18)) #  max SD of a gene from data
+        #self.D_reconstructed = torch.ones(self.num_samples, self.num_genes, device=self.device)
+        #self.D_sampled = torch.ones(self.num_samples, self.num_genes, device=self.device)
 
     def forward(self, D):
         # Nested plates for pixel-wise independence?
@@ -66,15 +70,32 @@ class GammaMatrixFactorization(PyroModule):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
                 P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale_P))
 
-        # Reconstruct D as the product of P and A
-        D_reconstructed = torch.matmul(P, A)  # (samples x genes) # move soft plus up here? KW TODO
+        # Reconstruct D as the product of P and A; D is samples by genes
+        D_reconstructed = softplus(torch.matmul(P, A))  # (samples x genes) # move soft plus up here? KW TODO
+        self.D_reconstructed = D_reconstructed
 
-        # Model the data D as being Normal distributed around the reconstructed D
-        # normal? Try saving D at every step
-        # compare sample reconstructed to previous step to see whats changing?
-        #print("no return")
-        pyro.sample("D", dist.Normal(softplus(D_reconstructed),torch.ones_like(D_reconstructed)).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+        ### Try using gene std
+        #std_D_per_gene = torch.std(D_reconstructed, dim=0, keepdim=True)  # (1 x genes)
+        #std_D_broadcasted = torch.clamp(std_D_per_gene.expand(self.num_samples, -1), min=0.5)  # (-1 preserves the size of the dim)
+        #pyro.sample("D", dist.Normal(D_reconstructed, std_D_broadcasted).to_event(2), obs=D)
 
+
+        ### Original scale of ones
+        #pyro.sample("D", dist.Normal(D_reconstructed,torch.ones_like(D_reconstructed)).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+        #D_sampled = pyro.sample("D", dist.Normal(D_reconstructed,torch.ones_like(D_reconstructed)).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+
+
+        ### Make scale_D learnable
+        pyro.sample("D", dist.GammaPoisson(D_reconstructed,self.scale_D).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+        #pyro.sample("D", dist.Normal(D_reconstructed,self.scale_D).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+
+
+        ### Use percentage of expression as uncertainty
+        #uncertainty = (D * 0.1) + 1
+        #pyro.sample("D", dist.Normal(D_reconstructed, uncertainty).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+        #D_sampled = pyro.sample("D", dist.Normal(D_reconstructed,torch.ones_like(D_reconstructed)).to_event(2), obs=D) # Check std ones KW TODO; do we want gen specific standard deviation
+
+        #self.D_sampled = D_sampled
         #return D_reconstructed
 
 def guide(D):

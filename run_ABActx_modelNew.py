@@ -66,9 +66,10 @@ writer = SummaryWriter()
 #CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
 ABA_data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
 ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
-D = torch.tensor(ISO_data.X)
+#D = torch.tensor(np.log1p(ISO_data.X)) ## LOG TRANSFORM DATA
+D = torch.tensor(ISO_data.X) ## RAW COUNT DATA
 coords = ISO_data.obs.loc[:,['x','y']]
-num_patterns = 6
+num_patterns = 12
 
 if torch.backends.mps.is_available():
     device=torch.device('mps')
@@ -95,7 +96,7 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 1000
+num_steps = 10000
 
 # Use the Adam optimizer
 optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # try default
@@ -125,7 +126,7 @@ for step in range(num_steps):
         writer.add_scalar("Loss/train", loss, step)
         writer.flush()
     if step % 50 == 0:
-        plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, 2, 3, savename = None)
+        plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, 4, 3, savename = None)
         writer.add_figure("loc_P", plt.gcf(), step)
 
         plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
@@ -134,14 +135,44 @@ for step in range(num_steps):
         plt.hist(pyro.param("loc_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
         writer.add_figure("loc_A std (gene stds)", plt.gcf(), step)
 
+        plt.hist(pyro.param("scale_D").detach().to('cpu').numpy().flatten(), bins=30)
+        writer.add_figure("scale_D_hist", plt.gcf(), step)
+
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
+        D_reconstructed = model.D_reconstructed.detach().cpu().numpy()
+        plt.hist(D_reconstructed.flatten(), bins=30)
+        writer.add_figure("D_reconstructed_his", plt.gcf(), step)
+
+        #plot_grid(D_reconstructed, coords, 2, 3, savename = None)
+        #writer.add_figure("D_reconstructed", plt.gcf(), step)
+
+
+
 #%% Retrieve the inferred parameters
-#A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
-#P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
-#A_mean = pyro.param("A_mean").detach().to('cpu').numpy()
-#P_mean = pyro.param("P_mean").detach().to('cpu').numpy()
+savename = 'Oct22_17-21-41_'
+
+loc_A = pd.DataFrame(pyro.param("loc_A").detach().to('cpu').numpy()).T
+loc_A.columns = ['Pattern_' + str(x+1) for x in loc_A.columns]
+loc_A.index = ISO_data.var['gene_symbol_x']
+loc_A.to_csv(savename + "loc_A.csv")
+
+scale_A = pd.DataFrame(pyro.param("scale_A").detach().to('cpu').numpy()).T
+scale_A.columns = ['Pattern_' + str(x+1) for x in scale_A.columns]
+scale_A.index = ISO_data.var['gene_symbol_x']
+scale_A.to_csv(savename + "scale_A.csv")
+
+loc_P = pd.DataFrame(pyro.param("loc_P").detach().to('cpu').numpy())
+loc_P.columns = ['Pattern_' + str(x+1) for x in loc_P.columns]
+loc_P.index = ISO_data.obs.index
+loc_P.to_csv(savename + "loc_P.csv")
+
+scale_P = pd.DataFrame(pyro.param("scale_P").detach().to('cpu').numpy())
+scale_P.columns = ['Pattern_' + str(x+1) for x in scale_P.columns]
+scale_P.index = ISO_data.obs.index
+scale_P.to_csv(savename + "scale_P.csv")
+
 
 #pd.DataFrame(A_scale).to_csv('A_scale.csv')
 #pd.DataFrame(P_scale).to_csv('P_scale.csv')
