@@ -107,6 +107,13 @@ loss_fn = pyro.infer.Trace_ELBO()
 #%% Instantiate the model
 model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0], device=device)
 
+# Draw model
+#pyro.render_model(model, model_args=(D,),
+#                 render_params=True,
+#                 render_distributions=True,
+#                 #render_deterministic=True,
+#                 filename="updated_model_102224.pdf")
+
 
 #%% Instantiate the guide
 guide = AutoNormal(model)
@@ -120,7 +127,6 @@ svi = pyro.infer.SVI(model=model,
 
 #%% Run inference
 for step in range(num_steps):
-    #print(step)
     loss = svi.step(D)
     if step % 10 == 0:
         writer.add_scalar("Loss/train", loss, step)
@@ -148,7 +154,7 @@ for step in range(num_steps):
         #plot_grid(D_reconstructed, coords, 2, 3, savename = None)
         #writer.add_figure("D_reconstructed", plt.gcf(), step)
 
-
+writer.flush()
 
 #%% Retrieve the inferred parameters
 savename = 'Oct22_17-21-41_'
@@ -172,38 +178,3 @@ scale_P = pd.DataFrame(pyro.param("scale_P").detach().to('cpu').numpy())
 scale_P.columns = ['Pattern_' + str(x+1) for x in scale_P.columns]
 scale_P.index = ISO_data.obs.index
 scale_P.to_csv(savename + "scale_P.csv")
-
-
-#pd.DataFrame(A_scale).to_csv('A_scale.csv')
-#pd.DataFrame(P_scale).to_csv('P_scale.csv')
-#pd.DataFrame(A_mean).to_csv('A_mean.csv')
-#pd.DataFrame(P_mean).to_csv('P_mean.csv')
-
-
-# Print the shapes of the inferred parameters
-#print("Inferred A shape:", A_mean.shape)
-#print("Inferred P shape:", P_mean.shape)
-
-# End timer
-#print("Time taken:")
-#print(datetime.now() - startTime)
-
-# Plot the inferred patterns and true patterns
-#plot_grid(P_true.values, coords, 2, 2, savename = 'True_P.png')
-#plot_grid(P_mean, coords, 2, 2, savename = 'Inferred_P.png')
-
-# Save outputs
-#plt.figure()
-#plt.hist(P_true.values.flatten(), bins=30)
-#plt.savefig('P_true_hist.png')
-
-#plt.figure()
-#plt.hist(P_mean.flatten(), bins=30)
-#plt.savefig('P_mean_hist.png')
-
-# Check inferred parameters against the true parameters
-#plot_correlations(P_true.values, P_mean, 'P_mean')
-#writer.add_figure("P_mean_correlations", plt.gcf(), step)
-
-# # %%
-# writer.flush()
