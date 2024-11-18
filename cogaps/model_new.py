@@ -24,6 +24,7 @@ class GammaMatrixFactorization(PyroModule):
                  num_genes,
                  num_patterns,
                  num_samples,
+                 #mask_D = None,
                  device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]):
             ):
@@ -46,11 +47,15 @@ class GammaMatrixFactorization(PyroModule):
 
         #### scale D as a learnable parameter ###
         #self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.positive) # no constraints blows up values
-        self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.interval(0.1, 18)) # KW TODO: how to determine constraints? rn hardcoded as max SD of a gene from input data
+        self.scale_D = PyroParam(torch.ones(self.num_samples, self.num_genes, device=self.device), constraint=dist.constraints.interval(0.1, 20)) # KW TODO: how to determine constraints? rn hardcoded as max SD of a gene from input data
+        # try STD on all non zero data
 
         #### Store D reconstructed and D sampled ? ####
         #self.D_reconstructed = torch.ones(self.num_samples, self.num_genes, device=self.device)
         #self.D_sampled = torch.ones(self.num_samples, self.num_genes, device=self.device)
+
+        ### self.mask shape D
+        #self.mask_D = mask_D
 
     def forward(self, D):
         # Nested plates for pixel-wise independence?
@@ -79,8 +84,8 @@ class GammaMatrixFactorization(PyroModule):
         #pyro.sample("D", dist.Normal(D_reconstructed,torch.ones_like(D_reconstructed)).to_event(2), obs=D)
         #D_sampled = pyro.sample("D", dist.Normal(D_reconstructed,torch.ones_like(D_reconstructed)).to_event(2), obs=D)
 
-        ## Try making scale_D learnable
         pyro.sample("D", dist.GammaPoisson(D_reconstructed, self.scale_D).to_event(2), obs=D) ## Changed distribution to GammaPoisson
+
         #pyro.sample("D", dist.Normal(D_reconstructed,self.scale_D).to_event(2), obs=D)
 
         ## Try using percentage of expression as uncertainty
