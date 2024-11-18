@@ -107,7 +107,7 @@ elif torch.cuda.is_available():
 else:
     device=torch.device('cpu')
 
-#device=torch.device('cpu')
+device=torch.device('cpu')
 
 # Move data to device
 D = D.to(device)
@@ -138,11 +138,11 @@ model = ProbNMFModel(D, num_patterns, device=device)
 
 #%%
 # Inspect model
-pyro.render_model(model, model_args=(D,),
-                render_params=True,
-                render_distributions=True,
-                #render_deterministic=True,
-                filename="model.pdf")
+#pyro.render_model(model, model_args=(D,),
+#                render_params=True,
+#                render_distributions=True,
+#                #render_deterministic=True,
+#                filename="model.pdf")
 
 #%% Logging model
 #model.eval()
@@ -174,6 +174,7 @@ svi = pyro.infer.SVI(model=model,
 
 #%% Run inference
 for step in range(num_steps):
+    print(step)
     loss = svi.step(D)
     if step % 10 == 0:
         writer.add_scalar("Loss/train", loss, step)

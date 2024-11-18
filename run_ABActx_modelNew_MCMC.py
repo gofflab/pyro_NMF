@@ -25,8 +25,7 @@ from cogaps.utils import generate_structured_test_data, generate_test_data
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 #%% Plotting function
-## designed in mind for the NSF toy data
-## TODO move to utils -- tried but got error trying to import from utils
+## KW TODO -- generalize for any data; move out of model definition
 def plot_grid(patterns, coords, nrows, ncols, savename = None):
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*4, nrows*4))
     num_patterns = patterns.shape[1]
@@ -48,7 +47,7 @@ def plot_grid(patterns, coords, nrows, ncols, savename = None):
     if savename != None:
         plt.savefig(savename)
 
-def plot_correlations(true_vals, inferred_vals, savename):
+def plot_correlations(true_vals, inferred_vals, savename = None):
     true_vals_df = pd.DataFrame(true_vals)
     true_vals_df.columns = ['True_' + str(x) for x in true_vals_df.columns]
     inferred_vals_df = pd.DataFrame(inferred_vals)
@@ -67,9 +66,10 @@ writer = SummaryWriter()
 #CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
 ABA_data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
 ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
-D = torch.tensor(np.log1p(ISO_data.X))
+#D = torch.tensor(np.log1p(ISO_data.X)) ## LOG TRANSFORM DATA
+D = torch.tensor(ISO_data.X) ## RAW COUNT DATA
 coords = ISO_data.obs.loc[:,['x','y']]
-num_patterns = 6
+num_patterns = 12
 
 if torch.backends.mps.is_available():
     device=torch.device('mps')
@@ -97,36 +97,21 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 10000
-
-# Use the Adam optimizer
-#optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # try default
-
-# Define the loss function
-#loss_fn = pyro.infer.Trace_ELBO()
+num_steps = 10
 
 #%% Instantiate the model
 model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0], device=device)
 
-
-#%% Instantiate the guide
-#guide = AutoNormal(model)
-
-#%% Define the inference algorithm
-#svi = pyro.infer.SVI(model=model,
-#                    guide=guide,
-#                    optim=optimizer,
-#                    loss=loss_fn)
-
-#nuts_kernel = NUTS(model)
-kernel = RandomWalkKernel(model)
-mcmc = MCMC(kernel, num_samples = num_steps, warmup_steps = 5000000)
+nuts_kernel = NUTS(model)
+#kernel = RandomWalkKernel(model)
+mcmc = MCMC(nuts_kernel, num_samples = num_steps, warmup_steps = 10)
 mcmc.run(D)
 
 #%%
 ### GET LOSS
 samples = mcmc.get_samples()
 mses = list()
+
 for step in range(num_steps):
     A_i = samples['A'][step,:,:]
     P_i = samples['P'][step,:,:]
@@ -138,7 +123,7 @@ for step in range(num_steps):
         writer.add_scalar("MSE", mse, step)
         writer.flush()
     if step % 50 == 0:
-        plot_grid(P_i.detach().to('cpu').numpy(), coords, 2, 3, savename = None)
+        plot_grid(P_i.detach().to('cpu').numpy(), coords, 4, 3, savename = None)
         writer.add_figure("P", plt.gcf(), step)
 
         plt.hist(P_i.detach().to('cpu').numpy().flatten(), bins=30)
@@ -149,6 +134,7 @@ for step in range(num_steps):
 
         sns.heatmap(P_i.detach().to('cpu').numpy()[:10,:num_patterns].round(3), annot=True)
         writer.add_figure("P_i", plt.gcf(), step)
+
         sns.heatmap(A_i.detach().to('cpu').numpy()[:num_patterns,:10].round(3).T, annot=True)
         writer.add_figure("A_i", plt.gcf(), step)
 
@@ -157,26 +143,26 @@ for step in range(num_steps):
 
 
 #%% save
-savename = 'ISOctx_log1p_n6_MCMC_randomWalk_run3_'
+savename = 'results/SVI_MCMC/Oct29_17-00-11_MCMC_1kwarm_1ksample_scaleD20max_run3'
 last_Pi = pd.DataFrame(samples['P'][-1,:,:].detach().to('cpu').numpy())
 last_Pi.columns = ['Pattern_' + str(x + 1) for x in last_Pi.columns]
 last_Pi.index = ISO_data.obs.index
 last_Pi.to_csv(savename + 'P.csv')
 
-average_Pi = pd.DataFrame(torch.mean(samples['P'], dim=0).detach().to('cpu').numpy())
-average_Pi.columns = ['Pattern_' + str(x + 1) for x in average_Pi.columns]
-average_Pi.index = ISO_data.obs.index
-average_Pi.to_csv(savename + 'P_avg.csv')
+#average_Pi = pd.DataFrame(torch.mean(samples['P'], dim=0).detach().to('cpu').numpy())
+#average_Pi.columns = ['Pattern_' + str(x + 1) for x in average_Pi.columns]
+#average_Pi.index = ISO_data.obs.index
+#average_Pi.to_csv(savename + 'P_avg.csv')
 
 last_Ai = pd.DataFrame(samples['A'][-1,:,:].detach().to('cpu').numpy())
 last_Ai.index = ['Pattern_' + str(x + 1) for x in last_Ai.index]
 last_Ai.columns = ISO_data.var.loc[:,'gene_symbol_x']
 last_Ai.T.to_csv(savename + 'A.csv')
 
-average_Ai = pd.DataFrame(torch.mean(samples['A'], dim=0).detach().to('cpu').numpy())
-average_Ai.index = ['Pattern_' + str(x + 1) for x in average_Ai.index]
-average_Ai.columns = ISO_data.var.loc[:,'gene_symbol_x']
-average_Ai.T.to_csv(savename + 'A_avg.csv')
+#average_Ai = pd.DataFrame(torch.mean(samples['A'], dim=0).detach().to('cpu').numpy())
+#average_Ai.index = ['Pattern_' + str(x + 1) for x in average_Ai.index]
+#average_Ai.columns = ISO_data.var.loc[:,'gene_symbol_x']
+#average_Ai.T.to_csv(savename + 'A_avg.csv')
 
 
 #%% Retrieve the inferred parameters

@@ -24,8 +24,7 @@ from cogaps.utils import generate_structured_test_data, generate_test_data
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 #%% Plotting function
-## designed in mind for the NSF toy data
-## TODO move to utils -- tried but got error trying to import from utils
+## KW TODO -- generalize for any data; move out of model definition
 def plot_grid(patterns, coords, nrows, ncols, savename = None):
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*4, nrows*4))
     num_patterns = patterns.shape[1]
@@ -47,7 +46,7 @@ def plot_grid(patterns, coords, nrows, ncols, savename = None):
     if savename != None:
         plt.savefig(savename)
 
-def plot_correlations(true_vals, inferred_vals, savename):
+def plot_correlations(true_vals, inferred_vals, savename = None):
     true_vals_df = pd.DataFrame(true_vals)
     true_vals_df.columns = ['True_' + str(x) for x in true_vals_df.columns]
     inferred_vals_df = pd.DataFrame(inferred_vals)
@@ -68,6 +67,7 @@ ABA_data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotati
 ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
 #D = torch.tensor(np.log1p(ISO_data.X)) ## LOG TRANSFORM DATA
 D = torch.tensor(ISO_data.X) ## RAW COUNT DATA
+D = (D/(D.max()/3)).round()# test smaller integers; note gammapoisson needs integers
 coords = ISO_data.obs.loc[:,['x','y']]
 num_patterns = 12
 
@@ -88,6 +88,8 @@ D = D.to(device)
 #dataset = TensorDataset(D)
 #dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
 
+
+
 ##### RUN BELOW HERE
 #%% Clear Pyro's parameter store
 pyro.clear_param_store()
@@ -105,7 +107,7 @@ optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # try default
 loss_fn = pyro.infer.Trace_ELBO()
 
 #%% Instantiate the model
-model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0], device=device)
+model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0],device=device)
 
 # Draw model
 #pyro.render_model(model, model_args=(D,),
@@ -144,6 +146,13 @@ for step in range(num_steps):
         plt.hist(pyro.param("scale_D").detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("scale_D_hist", plt.gcf(), step)
 
+        #sns.heatmap(pyro.param("slab_prob_A").detach().to('cpu').numpy())
+        #writer.add_figure("slab_prob_A_heatmap", plt.gcf(), step)
+
+
+        #sns.heatmap(pyro.param("slab_prob_P").detach().to('cpu').numpy())
+        #writer.add_figure("slab_prob_P_heatmap", plt.gcf(), step)
+
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
@@ -157,7 +166,7 @@ for step in range(num_steps):
 writer.flush()
 
 #%% Retrieve the inferred parameters
-savename = 'Oct22_17-21-41_'
+savename = 'results/SVI_MCMC/Oct29_14-59-19_SVI_10k_scaleD20max_run3'
 
 loc_A = pd.DataFrame(pyro.param("loc_A").detach().to('cpu').numpy()).T
 loc_A.columns = ['Pattern_' + str(x+1) for x in loc_A.columns]
@@ -178,3 +187,5 @@ scale_P = pd.DataFrame(pyro.param("scale_P").detach().to('cpu').numpy())
 scale_P.columns = ['Pattern_' + str(x+1) for x in scale_P.columns]
 scale_P.index = ISO_data.obs.index
 scale_P.to_csv(savename + "scale_P.csv")
+
+# %%
