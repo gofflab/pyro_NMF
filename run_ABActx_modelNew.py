@@ -65,9 +65,9 @@ writer = SummaryWriter()
 #CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
 ABA_data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
 ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
+print((pd.DataFrame(ISO_data.X) == 0).sum().sum() / (ISO_data.shape[0]*ISO_data.shape[1]) * 100) # print percent zeros in the data
 #D = torch.tensor(np.log1p(ISO_data.X)) ## LOG TRANSFORM DATA
 D = torch.tensor(ISO_data.X) ## RAW COUNT DATA
-D = (D/(D.max()/3)).round()# test smaller integers; note gammapoisson needs integers
 coords = ISO_data.obs.loc[:,['x','y']]
 num_patterns = 12
 
@@ -140,6 +140,12 @@ for step in range(num_steps):
         plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("loc_P_hist", plt.gcf(), step)
 
+        #plot_grid(pyro.param("slabbed_P").detach().to('cpu').numpy(), coords, 4, 3, savename = None)
+        #writer.add_figure("slabbed_P", plt.gcf(), step)
+        #plt.hist(pyro.param("slabbed_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
+        #writer.add_figure("slabbed_A hist", plt.gcf(), step)
+
+
         plt.hist(pyro.param("loc_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
         writer.add_figure("loc_A std (gene stds)", plt.gcf(), step)
 
@@ -148,7 +154,6 @@ for step in range(num_steps):
 
         #sns.heatmap(pyro.param("slab_prob_A").detach().to('cpu').numpy())
         #writer.add_figure("slab_prob_A_heatmap", plt.gcf(), step)
-
 
         #sns.heatmap(pyro.param("slab_prob_P").detach().to('cpu').numpy())
         #writer.add_figure("slab_prob_P_heatmap", plt.gcf(), step)
