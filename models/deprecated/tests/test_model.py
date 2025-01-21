@@ -2,7 +2,7 @@
 import torch
 import pyro
 import pytest
-from cogaps.model import cogaps_model
+from models.model import cogaps_model
 
 def test_shapes():
     num_genes = 100

@@ -2,7 +2,7 @@
 import torch
 import pyro
 import pytest
-from cogaps.guide import guide
+from models.guide import guide
 
 def test_guide_params():
     num_genes = 100
