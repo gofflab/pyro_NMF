@@ -18,8 +18,10 @@ from pyro.infer.autoguide import \
 from torch.utils.data import DataLoader, TensorDataset
 
 #from cogaps.guide import CoGAPSGuide
-from cogaps.model_new import GammaMatrixFactorization
-from cogaps.utils import generate_structured_test_data, generate_test_data
+from models.model_new import GammaMatrixFactorization
+from models.utils import generate_structured_test_data, generate_test_data
+
+import random
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
@@ -62,12 +64,64 @@ from torch.utils.tensorboard import SummaryWriter
 
 writer = SummaryWriter()
 
-#CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
 ABA_data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
 ISO_data = ABA_data[ABA_data.obsm['atlas']['Isocortex']]
-print((pd.DataFrame(ISO_data.X) == 0).sum().sum() / (ISO_data.shape[0]*ISO_data.shape[1]) * 100) # print percent zeros in the data
+
+#print((pd.DataFrame(ISO_data.X) == 0).sum().sum() / (ISO_data.shape[0]*ISO_data.shape[1]) * 100)
+#print(ISO_data.X.max())
+#print(ISO_data.X.mean())
+#print(ISO_data.X.std())
+#plt.hist(ISO_data.X.flatten(),bins=50)
+
+ISO_data_nonzero = ISO_data.X[ISO_data.X != 0]
+#print(ISO_data_nonzero.max())
+#print(ISO_data_nonzero.mean())
+#print(ISO_data_nonzero.std())
+#plt.hist(ISO_data_nonzero,bins=50)
+
+
+#%%
+random.seed(123)
+# Reduce sparsity
+#ISO_data_reduce_sparsity = ISO_data.X
+zero_indices = np.where(ISO_data.X == 0)
+num_zeros_to_replace = int(len(zero_indices[0]) * 0)  # For example, replace 10% of the zeros
+# Randomly sample the zero positions
+random_zero_indices = np.random.choice(len(zero_indices[0]), size=num_zeros_to_replace, replace=False)
+# Replace the selected zeros with random values sampled from normal distribution
+# Sample the values from a normal distribution
+sampled_values = np.random.normal(loc=ISO_data_nonzero.mean(), scale=ISO_data_nonzero.std(), size=num_zeros_to_replace)
+# Round the sampled values to integers
+sampled_values = np.round(sampled_values).astype(int)
+# Ensure non-zero values by replacing any zero values with a small positive integer (e.g., 1)
+sampled_values[sampled_values <= 0] = 1
+# Replace the zeros with the sampled non-zero integers
+
+for i in range(num_zeros_to_replace):
+    x = zero_indices[0][i]
+    y = zero_indices[1][i]
+    sample_i = sampled_values[i]
+    ISO_data.X[x][y] = sample_i
+
+#ISO_data.X = ISO_data_reduce_sparsity
+
+#%%
+print((pd.DataFrame(ISO_data.X) == 0).sum().sum() / (ISO_data.shape[0]*ISO_data.shape[1]) * 100)
+print(ISO_data.X.max())
+print(ISO_data.X.mean())
+print(ISO_data.X.std())
+plt.hist(ISO_data.X.flatten(),bins=50)
+
+ISO_data_nonzero = ISO_data.X[ISO_data.X != 0]
+print(ISO_data_nonzero.max())
+print(ISO_data_nonzero.mean())
+print(ISO_data_nonzero.std())
+plt.hist(ISO_data_nonzero,bins=50)
+
+#%%
 #D = torch.tensor(np.log1p(ISO_data.X)) ## LOG TRANSFORM DATA
 D = torch.tensor(ISO_data.X) ## RAW COUNT DATA
+#D = (D/(D.max()/3)).round()# test smaller integers; note gammapoisson needs integers
 coords = ISO_data.obs.loc[:,['x','y']]
 num_patterns = 12
 
@@ -140,23 +194,11 @@ for step in range(num_steps):
         plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("loc_P_hist", plt.gcf(), step)
 
-        #plot_grid(pyro.param("slabbed_P").detach().to('cpu').numpy(), coords, 4, 3, savename = None)
-        #writer.add_figure("slabbed_P", plt.gcf(), step)
-        #plt.hist(pyro.param("slabbed_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
-        #writer.add_figure("slabbed_A hist", plt.gcf(), step)
-
-
         plt.hist(pyro.param("loc_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
         writer.add_figure("loc_A std (gene stds)", plt.gcf(), step)
 
         plt.hist(pyro.param("scale_D").detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("scale_D_hist", plt.gcf(), step)
-
-        #sns.heatmap(pyro.param("slab_prob_A").detach().to('cpu').numpy())
-        #writer.add_figure("slab_prob_A_heatmap", plt.gcf(), step)
-
-        #sns.heatmap(pyro.param("slab_prob_P").detach().to('cpu').numpy())
-        #writer.add_figure("slab_prob_P_heatmap", plt.gcf(), step)
 
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")

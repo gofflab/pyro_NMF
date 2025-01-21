@@ -13,15 +13,12 @@ import pyro.poutine as poutine
 import scanpy as sc
 import seaborn as sns
 import torch
-from pyro.optim import Adam
-#from pyro.optim.multi import PyroMultiOptimizer
-#from pyro.optim import Adam, SGD, MultiOptimizer
 from pyro.infer.autoguide import \
     AutoNormal  # , AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
-from cogaps.model_NB_cleaned_SS_updatableFixedPvalues import GammaMatrixFactorization, plot_grid, plot_correlations
-from cogaps.utils import generate_structured_test_data, generate_test_data
+from models.model_NB_cleaned_SS import GammaMatrixFactorization, plot_grid, plot_correlations
+from models.utils import generate_structured_test_data, generate_test_data
 
 import random
 from torch.utils.tensorboard import SummaryWriter
@@ -36,8 +33,10 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 ########### ALL USER DEFINED INPUTS HERE ##############
 #######################################################
 
-data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
-#data = data[data.obsm['atlas']['Isocortex']]
+#ata = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad')
+data = ad.read_h5ad('/home/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') # samples x genes
+
+data = data[data.obsm['atlas']['Isocortex']]
 D = torch.tensor(data.X) ## RAW COUNT DATA
 
 #atlas = data.obsm['atlas'].loc[:,['SS', 'MO', 'OLF','HIP','STR','layer 1','layer 2/3','layer 4','layer 5','layer 6']]*1
@@ -47,119 +46,27 @@ add_noise = False
 coords = data.obs.loc[:,['x','y']]
 coords['y'] = -1*coords['y']
 
-num_patterns = 20 # Num EXTRA patterns
+num_patterns = 10 # Num EXTRA patterns
 device = None # auto detect
 NB_probs = None # use default of 1 - sparsity
 
-outputDir = '/disk/kyla/projects/pyro_NMF/results/20241218_SSlayers_updateFixed/'
+#outputDir = '/disk/kyla/projects/pyro_NMF/results/20241217_SSnone/'
+outputDir = '/home/kyla/projects/pyro_NMF/results/SS_recovery_analysis/'
+
 if not os.path.exists(outputDir):
     os.makedirs(outputDir)
 
-savename = 'ABCA-1_wholeSlice_superviseLayers_updateFixed_Pfixed_LRe-3'
+savename = 'SSlayers_all'
 
-tensorboard_identifier = 'ABA_wholeSlice_SSLayers_updateFixed_Pfixed_LRe-3'
+tensorboard_identifier = 'SSlayers_all'
 
 num_steps = 10000 # Define the number of optimization steps
 
-plot_dims = [5, 5]
+plot_dims = [3, 5]
 
 
 
-#optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # Use the Adam optimizer
-# Define separate optimizers with different learning rates
-#optimizer = MultiOptimizer([
-#    {"optimizer": Adam, "optim_args": {"lr": 0.1, "eps": 1e-08}, "param_names": ["loc_A", "scale_A", "loc_P", "scale_P"]},
-#    {"optimizer": Adam, "optim_args": {"lr": 0.01, "eps": 1e-08}, "param_names": ["fixed_P"]},
-#])
-
-#optimizer = Adam({
-#    "lr": 0.1,  # Default learning rate
-#    "eps": 1e-08,
-#})
-
-#optimizer.add_param_group({"params": ["fixed_P"], "lr": 0.01})
-#optimizer_highlr = pyro.optim.Adam({"lr": 0.1, "eps":1e-08, "params":["loc_A", "scale_A", "loc_P", "scale_P"]}) # Use the Adam optimizer
-#optimizer_lowlr = pyro.optim.Adam({"lr": 0.01, "eps":1e-08, "params":["fixed_P"]})
-#optimizer = PyroMultiOptimizer([optimizer_highlr, optimizer_lowlr])
-#optimizer = MixedMultiOptimizer([(["loc_A", "scale_A", "loc_P", "scale_P"], optimizer_highlr),(["fixed_P"], optimizer_lowlr)])
-
-#optimizer = MultiOptimizer(
-#    [
-#        Adam({"lr": 0.01}),  # For fixed_P
-#        Adam({"lr": 0.1})    # For other parameters
-#    ],
-#    {
-#        "fixed_P": fixed_P_param,
-#        "others": ["loc_A", "scale_A", "loc_P", "scale_P"]
-#    }
-#)
-
-#optimizer = pyro.optim.ClippedAdam({
-#    "lr": 0.1,
-#    "eps": 1e-08,
-#    "param_group": [
-#        {"params": ["loc_A", "scale_A", "loc_P", "scale_P"], "lr": 0.1},
-#        {"params": ["fixed_P"], "lr": 0.01},
-#    ],
-#})
-'''
-# Define the optimizer with parameter groups
-class CustomClippedAdam:
-    def __init__(self, params, lr=0.1, eps=1e-8, clip_norm=1.0):
-        self.optimizer = pyro.optim.Adam(params, lr=lr, eps=eps)
-        self.clip_norm = clip_norm
-
-    def __call__(self, params):
-        # Split parameters into groups with different learning rates
-        param_groups = [
-            {"params": [p for n, p in params if "fixed_P" not in n], "lr": 0.1},  # Higher learning rate
-            {"params": [p for n, p in params if "fixed_P" in n], "lr": 0.01},   # Lower learning rate for fixed_P
-        ]
-
-        adam_optimizer = pyro.optim.Adam(param_groups, eps=1e-8)
-        return pyro.optim.ClippedAdam(adam_optimizer, clip_norm=self.clip_norm)
-
-optimizer = pyro.optim.PyroOptim(CustomClippedAdam, {"lr": 0.1, "eps": 1e-8})
-'''
-'''
-def custom_clipped_adam(params):
-    # Define parameter groups with specific learning rates
-    param_groups = [
-        {"params": [p for n, p in params if "fixed_P" not in n], "lr": 0.1},
-        {"params": [p for n, p in params if "fixed_P" in n], "lr": 0.01},
-    ]
-    return pyro.optim.Adam(param_groups, eps=1e-8)
-
-# Wrap the custom optimizer in Pyro's PyroOptim
-optimizer = pyro.optim.PyroOptim(custom_clipped_adam, {})
-'''
-''''
-# Define a custom ClippedAdam optimizer with parameter groups
-def create_optimizer(params):
-    # Manually create parameter groups with different learning rates
-    param_groups = [
-        {"params": [p for name, p in params if "fixed_P" not in name], "lr": 0.1},  # Default parameters
-        {"params": [p for name, p in params if "fixed_P" in name], "lr": 0.01},    # Lower learning rate for "fixed_P"
-    ]
-    return torch.optim.Adam(param_groups, eps=1e-8)  # Base optimizer used with ClippedAdam
-
-# Wrap the custom optimizer in Pyro's ClippedAdam
-optimizer = ClippedAdam({"lr": 0.1, "clip_norm": 1.0})
-
-# Create PyroOptim using a lambda to pass parameters to your custom optimizer
-pyro_optimizer = pyro.optim.PyroOptim(
-    lambda params: optimizer(get_param_groups(params)),
-    {}
-)
-
-# Define helper to map parameter names and tensors
-def get_param_groups(params):
-    return [(name, param) for name, param in pyro.get_param_store().named_parameters()]
-
-'''
-
-
-
+optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # Use the Adam optimizer
 loss_fn = pyro.infer.Trace_ELBO() # Define the loss function
 draw_model = None # None or name for output file
 
@@ -207,41 +114,7 @@ writer = SummaryWriter(comment = tensorboard_identifier)
 
 
 # Instantiate the model
-model = GammaMatrixFactorization(D.shape[1], D.shape[0], num_patterns, fixed_patterns=atlas.to_numpy(), NB_probs = NB_probs, device=device)
-
-
-# Define helper to group parameters
-#def create_param_groups(params):
-#    # Assign parameters to groups based on their names
-#   param_groups = [
-#        {"params": [p for name, p in params if "fixed_P" not in name], "lr": 0.1},  # Default learning rate
-#        {"params": [p for name, p in params if "fixed_P" in name], "lr": 0.01},    # Lower learning rate for "fixed_P"
-#    ]
-#    print(param_groups)
-#    return param_groups
-
-# Custom optimizer function for PyroOptim
-#def custom_optimizer(params):
-#    param_groups = create_param_groups(params)
-#    return torch.optim.Adam(param_groups, eps=1e-8)
-
-# Wrap the custom optimizer in Pyro's PyroOptim
-#optimizer = pyro.optim.PyroOptim(
-#    lambda params: custom_optimizer([(name, param) for name, param in pyro.get_param_store().named_parameters()]),
-#    {}
-#)
-
-
-def per_param_callable(param_name):
-    if param_name == 'fixed_P':
-        return {"lr": 0.001}
-    else:
-        return {"lr": 0.1}
-
-optimizer = pyro.optim.Adam(per_param_callable)
-
-#optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # Use the Adam optimizer
-
+model = GammaMatrixFactorization(D.shape[1], D.shape[0], num_patterns, fixed_patterns=transformed_matrix.to_numpy(), NB_probs = NB_probs, device=device)
 
 # Draw model
 if draw_model != None:
@@ -289,18 +162,6 @@ for step in range(1,num_steps+1):
 
         plot_grid(model.P_total.detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
         writer.add_figure("P_total", plt.gcf(), step)
-
-        #plot_grid(pyro.param("fixed_loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
-        #writer.add_figure("fixed_loc_P", plt.gcf(), step)
-
-        #plt.hist(pyro.param("fixed_loc_P").detach().to('cpu').numpy().flatten(), bins=30)
-        #writer.add_figure("fixed_loc_P_hist", plt.gcf(), step)
-        plot_grid(pyro.param("fixed_P").detach().to('cpu').numpy(), coords, 2, 3, savename = None)
-        writer.add_figure("fixed_P", plt.gcf(), step)
-
-        plt.hist(pyro.param("fixed_P").detach().to('cpu').numpy().flatten(), bins=30)
-        writer.add_figure("fixed_P_hist", plt.gcf(), step)
-
 
         plt.hist(model.P_total.detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("P_total_hist", plt.gcf(), step)
@@ -368,14 +229,6 @@ result_anndata.layers['loc_D'] = loc_D
 result_anndata.uns['runtime (seconds)'] = round((endTime - startTime).total_seconds())
 result_anndata.uns['loss'] = pd.DataFrame(losses, index=steps, columns=['loss'])
 result_anndata.obsm['atlas_used'] = transformed_matrix
-
-fixed_P = pd.DataFrame(pyro.param("fixed_P").detach().to('cpu').numpy())
-#loc_P.columns = list(atlas.columns) + ['Pattern_' + str(x) for x in range(1,num_patterns+1)]
-fixed_P.columns = transformed_matrix.columns
-fixed_P.index = result_anndata.obs.index
-result_anndata.obsm['fixed_P'] = fixed_P
-
-
 result_anndata.write_h5ad(outputDir + savename + '.h5ad')
 
 writer.flush()

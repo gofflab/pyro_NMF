@@ -14,10 +14,10 @@ import seaborn as sns
 import torch
 from pyro.infer.autoguide import AutoNormal, AutoDiagonalNormal
 from sklearn.decomposition import PCA
-from cogaps.utils import initialize_inducing_points_with_pca
+from models.utils import initialize_inducing_points_with_pca
 
 #from nsf.guide import CoGAPSGuide
-from cogaps.nsf import NSFModel
+from models.nsf import NSFModel
 #from cogaps.utils import generate_structured_test_data, generate_test_data
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'

@@ -17,7 +17,7 @@ from pyro.infer.autoguide import \
     AutoNormal  # , AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
-from cogaps.model_NB_cleaned import GammaMatrixFactorization, plot_grid, plot_correlations
+from models.model_NB_cleaned import GammaMatrixFactorization, plot_grid, plot_correlations
 #from cogaps.utils import generate_structured_test_data, generate_test_data
 
 import random
@@ -34,7 +34,9 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 #### input data here, should be stored in anndata.X layer
 # If you have a numpy array of data try : data = ad.AnnData(array_data) # Kyla untested
-data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') # samples x genes
+#data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') # samples x genes
+data = ad.read_h5ad('/home/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') # samples x genes
+
 #data = data[data.obsm['atlas']['Isocortex']]
 
 D = torch.tensor(data.X) ## RAW COUNT DATA
@@ -44,17 +46,17 @@ coords = data.obs.loc[:,['x','y']] # samples x 2
 coords['y'] = -1*coords['y'] # specific for this dataset
 
 num_patterns = 20 # select num patterns
-num_steps = 10000 # Define the number of optimization steps
+num_steps = 1000 # Define the number of optimization steps
 
 device = None # options ['cpu', 'cuda', 'mps', etc]; if None: auto detect cpu vs gpu vs mps
 NB_probs = None # in range [0,1]; if None: use default of 1 - sparsity; this is the probs argument for NegativeBinomial for D
 
 #### output parameters
-outputDir = '/disk/kyla/projects/pyro_NMF/results/'
-savename = 'ABCA-1_wholeSlice' # output anndata will be saved in outputDir/savename.h5ad
+outputDir = '/home/kyla/projects/pyro_NMF/results/'
+savename = 'SVI_logGrad' # output anndata will be saved in outputDir/savename.h5ad
 
 useTensorboard = True
-tensorboard_identifier = 'ABA_wholeSlice' # key added to tensorboard output name
+tensorboard_identifier = 'SVI_logGrad' # key added to tensorboard output name
 
 plot_dims = [5, 4] # rows x columns should be > num patterns; this is for plotting
 
@@ -129,6 +131,16 @@ for step in range(1,num_steps+1):
             writer.add_scalar("Loss/train", loss, step)
             writer.flush()
 
+        for name, param in pyro.get_param_store().items():
+            if param.grad is not None:
+                print(name, param.grad.norm().item())
+                #print(name, param.grad_fn)
+                #print(name, param.requires_grad)
+            else:
+                print(name, ' None')
+                #print(name, param.grad_fn)
+                #print(name, param.requires_grad)
+
         losses.append(loss)
         steps.append(step)
 
@@ -161,6 +173,7 @@ for step in range(1,num_steps+1):
 endTime = datetime.now()
 print('Runtime: '+ str(round((endTime - startTime).total_seconds())) + ' seconds')
 
+#%%
 # Save the inferred parameters
 if not os.path.exists(outputDir):
     os.makedirs(outputDir)
@@ -209,3 +222,4 @@ if useTensorboard:
     writer.flush()
 
 #
+# %%

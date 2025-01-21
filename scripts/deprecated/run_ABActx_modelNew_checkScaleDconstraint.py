@@ -18,8 +18,8 @@ from pyro.infer.autoguide import \
 from torch.utils.data import DataLoader, TensorDataset
 
 #from cogaps.guide import CoGAPSGuide
-from cogaps.model_new_checkScaleDconstraint import GammaMatrixFactorization
-from cogaps.utils import generate_structured_test_data, generate_test_data
+from models.model_new_checkScaleDconstraint import GammaMatrixFactorization
+from models.utils import generate_structured_test_data, generate_test_data
 from torch.utils.tensorboard import SummaryWriter
 
 

@@ -3,9 +3,9 @@
 import torch
 import pyro
 import pyro.optim
-from cogaps.model import ProbNMFModel
-from cogaps.guide import CoGAPSGuide
-from cogaps.utils import generate_test_data, generate_structured_test_data
+from models.model import ProbNMFModel
+from models.guide import CoGAPSGuide
+from models.utils import generate_test_data, generate_structured_test_data
 import pyro.poutine as poutine
 from datetime import datetime
 from pyro.infer.autoguide import AutoNormal

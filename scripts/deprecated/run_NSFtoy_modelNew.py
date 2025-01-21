@@ -2,7 +2,6 @@
 #%%
 import os
 from datetime import datetime
-
 import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,8 +17,8 @@ from pyro.infer.autoguide import \
 from torch.utils.data import DataLoader, TensorDataset
 
 #from cogaps.guide import CoGAPSGuide
-from cogaps.model import ProbNMFModel
-from cogaps.utils import generate_structured_test_data, generate_test_data
+from models.model_new import GammaMatrixFactorization
+from models.utils import generate_structured_test_data, generate_test_data
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
@@ -29,10 +28,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 def plot_grid(patterns, coords, nrows, ncols, savename = None):
     fig, axes = plt.subplots(nrows,ncols)
     num_patterns = patterns.shape[1]
-    #print(patterns.shape)
-    #print(coords['x'].sort_values().head(40))
     x, y = coords['x'], coords['y']
-    # Determine the extent of the grid
     x_min, x_max = np.min(x), np.max(x)
     y_min, y_max = np.min(y), np.max(y)
     resolution = 0.114286
@@ -45,19 +41,13 @@ def plot_grid(patterns, coords, nrows, ncols, savename = None):
             if i < num_patterns:
                 # Initialize an empty grid (NaN-filled)
                 grid = np.full((len(y_grid), len(x_grid)), np.nan)
-
                 # Map the patterns to the grid; find nearest grid indices for each x, y pair
                 ix = np.searchsorted(x_grid, x) - 1
                 iy = np.searchsorted(y_grid, y) - 1
-
                 for j in range(len(patterns[:,i])):
                     if 0 <= ix[j] < len(x_grid) and 0 <= iy[j] < len(y_grid):
                         grid[iy[j], ix[j]] = patterns[j,i]
-
                 axes[r,c].imshow(grid, cmap='viridis')
-
-                # or use scatter plot
-                #axes[r,c].scatter(coords['x'], coords['y'], c=patterns[:,i], cmap='viridis', s = 5)
                 i += 1
     if savename != None:
         plt.savefig(savename)
@@ -65,17 +55,13 @@ def plot_grid(patterns, coords, nrows, ncols, savename = None):
 def plot_correlations(true_vals, inferred_vals, savename):
     true_vals_df = pd.DataFrame(true_vals)
     true_vals_df.columns = ['True_' + str(x) for x in true_vals_df.columns]
-
     inferred_vals_df = pd.DataFrame(inferred_vals)
     inferred_vals_df.columns = ['Inferred_' + str(x) for x in inferred_vals_df.columns]
-
     correlations = true_vals_df.merge(inferred_vals_df, left_index=True, right_index=True).corr().round(2)
-
     plt.figure()
     sns.clustermap(correlations.iloc[:true_vals.shape[1], true_vals.shape[1]:], annot=False, cmap='coolwarm', cbar=True, vmin=-1, vmax=1)
     if savename != None:
         plt.savefig(savename + '_correlations.png')
-
 
 #%% Import tensorboard & setup writer
 from torch.utils.tensorboard import SummaryWriter
@@ -83,39 +69,35 @@ from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 
 ## Load in NSF toy data
-#S1 = sc.read_h5ad('S1.h5ad')
-#S1 = S1[:,:80] # based on NSF demo.ipynb
-#P_true = pd.DataFrame(S1.obsm['spfac'])
-#P_true.columns = ['True_' + str(i) for i in range(1, P_true.shape[1]+1)]
-#D = torch.tensor(pd.DataFrame(S1.layers['counts']).values) # D should be sample by genes
-#coords = pd.DataFrame(S1.obsm['spatial'])
-#coords.columns = ['x', 'y']
+S1 = sc.read_h5ad('S1.h5ad')
+S1 = S1[:,:80] # based on NSF demo.ipynb
+P_true = pd.DataFrame(S1.obsm['spfac'])
+P_true.columns = ['True_' + str(i) for i in range(1, P_true.shape[1]+1)]
+D = torch.tensor(pd.DataFrame(S1.layers['counts']).values) # D should be sample by genes
+coords = pd.DataFrame(S1.obsm['spatial'])
+coords.columns = ['x', 'y']
 
-CTX_data = pd.read_csv('ISO_data.csv',index_col=0)
-D = torch.tensor(CTX_data.values)
-num_patterns = 12
+num_patterns = 4
 
-#plot_grid(A_true.values, coords, 2, 2, savename = 'patterns_heatmap.png')
-
-# Set device
-# if torch.backends.cuda.is_available():
-#     device=torch.device('cuda')
 if torch.backends.mps.is_available():
     device=torch.device('mps')
+    print('using mps')
 elif torch.cuda.is_available():
     device=torch.device('cuda')
+    print('using cuda')
 else:
     device=torch.device('cpu')
-
-device=torch.device('cpu')
+    print('using cpu')
+#device=torch.device('cpu') ## NEED TO ADD BACK IN DEVICE IN THE MODEL
 
 # Move data to device
 D = D.to(device)
 
 # Create a DataLoader to handle batching and shuffling (not implemented yet)
-dataset = TensorDataset(D)
-dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
+#dataset = TensorDataset(D)
+#dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
 
+##### RUN BELOW HERE
 #%% Clear Pyro's parameter store
 pyro.clear_param_store()
 
@@ -123,54 +105,29 @@ pyro.clear_param_store()
 startTime = datetime.now()
 
 # Define the number of optimization steps
-num_steps = 1000
+num_steps = 5000
 
 # Use the Adam optimizer
-#optimizer = pyro.optim.Adam({"lr": 0.05})
-optimizer = pyro.optim.Adam({"lr": 0.1})
+optimizer = pyro.optim.Adam({"lr": 0.1, "eps":1e-08}) # try default
 
 # Define the loss function
 loss_fn = pyro.infer.Trace_ELBO()
 
 #%% Instantiate the model
 #model = CoGAPSModel(D, num_patterns, device=device)
-model = ProbNMFModel(D, num_patterns, device=device)
+model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0],device=device)
+#(D, num_patterns, device=device, init_method=None)
 
-#%%
-# Inspect model
-#pyro.render_model(model, model_args=(D,),
-#                render_params=True,
-#                render_distributions=True,
-#                #render_deterministic=True,
-#                filename="model.pdf")
-
-#%% Logging model
-#model.eval()
-#writer.add_graph(model,D)
-#model.train()
 
 #%% Instantiate the guide
 guide = AutoNormal(model)
-#guide = AutoMultivariateNormal(model)
-#guide = AutoLowRankMultivariateNormal(model, rank=min(num_patterns, 10))
-#guide = AutoDiagonalNormal(model)
 
-# The code snippet `# #%% Define the inference algorithm
-# # svi = pyro.infer.SVI(model=model,
-# #                     guide=guide,
-# #                     optim=optimizer,
-# #                     loss=loss_fn)` is defining the Stochastic Variational Inference (SVI)
-# algorithm in Pyro.
 #%% Define the inference algorithm
 svi = pyro.infer.SVI(model=model,
                     guide=guide,
                     optim=optimizer,
                     loss=loss_fn)
 
-# #%% Trace
-# #trace = poutine.trace(model(D)).get_trace()
-# #trace.compute_log_prob()  # optional, but allows printing of log_prob shapes
-# #print(trace.format_shapes())
 
 #%% Run inference
 for step in range(num_steps):
@@ -179,20 +136,27 @@ for step in range(num_steps):
     if step % 10 == 0:
         writer.add_scalar("Loss/train", loss, step)
         writer.flush()
-    #if step % 50 == 0:
-    #    plot_grid(pyro.param("P_mean").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
-    #    writer.add_figure("P_mean", plt.gcf(), step)
+    if step % 50 == 0:
+        plot_grid(pyro.param("scale_P").detach().to('cpu').numpy(), coords, 2, 2, savename = None)
+        writer.add_figure("scale_P", plt.gcf(), step)
+
+        plt.hist(pyro.param("scale_P").detach().to('cpu').numpy().flatten(), bins=30)
+        writer.add_figure("scale_P_hist", plt.gcf(), step)
+
+        plt.hist(pyro.param("scale_A").std(dim=0).detach().to('cpu').numpy(), bins=30)
+        writer.add_figure("scale_A std (gene stds)", plt.gcf(), step)
+
     if step % 100 == 0:
         print(f"Iteration {step}, ELBO loss: {loss}")
 
 #%% Retrieve the inferred parameters
-A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
-P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
+#A_scale = pyro.param("A_scale").detach().to('cpu').numpy()
+#P_scale = pyro.param("P_scale").detach().to('cpu').numpy()
 A_mean = pyro.param("A_mean").detach().to('cpu').numpy()
 P_mean = pyro.param("P_mean").detach().to('cpu').numpy()
 
-pd.DataFrame(A_scale).to_csv('A_scale.csv')
-pd.DataFrame(P_scale).to_csv('P_scale.csv')
+#pd.DataFrame(A_scale).to_csv('A_scale.csv')
+#pd.DataFrame(P_scale).to_csv('P_scale.csv')
 pd.DataFrame(A_mean).to_csv('A_mean.csv')
 pd.DataFrame(P_mean).to_csv('P_mean.csv')
 
@@ -224,4 +188,3 @@ writer.add_figure("P_mean_correlations", plt.gcf(), step)
 
 # # %%
 # writer.flush()
-# %%

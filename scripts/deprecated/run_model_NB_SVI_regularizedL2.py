@@ -17,15 +17,13 @@ from pyro.infer.autoguide import \
     AutoNormal  # , AutoDiagonalNormal, AutoMultivariateNormal, AutoLowRankMultivariateNormal
 from torch.utils.data import DataLoader, TensorDataset
 
-from cogaps.model_NB_cleaned import GammaMatrixFactorization, plot_grid, plot_correlations
-from cogaps.plotting import plot_multisample_scale
+from models.model_NB_cleaned_regularizedL2 import GammaMatrixFactorization, plot_grid, plot_correlations
 #from cogaps.utils import generate_structured_test_data, generate_test_data
 
 import random
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
-torch.cuda.memory._record_memory_history()
 
 
 #%%
@@ -36,37 +34,33 @@ torch.cuda.memory._record_memory_history()
 
 #### input data here, should be stored in anndata.X layer
 # If you have a numpy array of data try : data = ad.AnnData(array_data) # Kyla untested
-data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_wMeta_wAnnotations_wAtlas_sub20_KW.h5ad') # samples x genes
-data = data[data.obs['brain_section_label_x'].isin(['Zhuang-ABCA-1.082', 'Zhuang-ABCA-1.083', 'Zhuang-ABCA-1.084', 'Zhuang-ABCA-1.085', 'Zhuang-ABCA-1.086'])]
-data = data[data.obs.sort_values('z').index,:]
-sampleDf = data.obs['brain_section_label_x']
-
-# Remove rows and columns that are all zeros
-#data = data[~np.all(data.X == 0, axis=1), :]  # Remove rows with all zeros
-#data = data[:, ~np.all(data.X == 0, axis=0)]  # Remove columns with all zeros
-
-
-#(156722, 1122)
+#data = ad.read_h5ad('/disk/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') # samples x genes
+data = ad.read_h5ad('/home/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') # samples x genes
 #data = data[data.obsm['atlas']['Isocortex']]
-
 D = torch.tensor(data.X) ## RAW COUNT DATA
+
+
+### sample max 1
+#data_max1 = pd.DataFrame(data.X)
+#samleMax1_run1 = data_max1.div(data_max1.max(axis=1), axis=0)
+#D = torch.tensor(samleMax1_run1.to_numpy()) ## RAW COUNT DATA
 
 #### coords should be two columns named x and y
 coords = data.obs.loc[:,['x','y']] # samples x 2
 coords['y'] = -1*coords['y'] # specific for this dataset
 
 num_patterns = 20 # select num patterns
-num_steps = 1000 # Define the number of optimization steps
+num_steps = 200000 # Define the number of optimization steps
 
 device = None # options ['cpu', 'cuda', 'mps', etc]; if None: auto detect cpu vs gpu vs mps
 NB_probs = None # in range [0,1]; if None: use default of 1 - sparsity; this is the probs argument for NegativeBinomial for D
 
 #### output parameters
-outputDir = '/disk/kyla/projects/pyro_NMF/results/'
-savename = 'mem_trace_test' # output anndata will be saved in outputDir/savename.h5ad
-mem_file = savename
+outputDir = '/home/kyla/projects/pyro_NMF/results/scaleInputs/'
+savename = 'longRun_SVI_regularized' # output anndata will be saved in outputDir/savename.h5ad
+
 useTensorboard = True
-tensorboard_identifier = 'mem_trace_test' # key added to tensorboard output name
+tensorboard_identifier = 'longRun_SVI_regularized' # key added to tensorboard output name
 
 plot_dims = [5, 4] # rows x columns should be > num patterns; this is for plotting
 
@@ -105,7 +99,7 @@ if useTensorboard:
 
 
 # Instantiate the model
-model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0], NB_probs = NB_probs, device=device)
+model = GammaMatrixFactorization(D.shape[1], num_patterns, D.shape[0], lambda_A = 1e-4, lambda_P = 1e-4, NB_probs = NB_probs, device=device)
 
 # Draw model
 if draw_model != None:
@@ -146,8 +140,8 @@ for step in range(1,num_steps+1):
 
     if step % 50 == 0:
         if useTensorboard:
-            #plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
-            #writer.add_figure("loc_P", plt.gcf(), step)
+            plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
+            writer.add_figure("loc_P", plt.gcf(), step)
 
             plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
             writer.add_figure("loc_P_hist", plt.gcf(), step)
@@ -170,24 +164,13 @@ for step in range(1,num_steps+1):
             plt.hist(D_reconstructed.flatten(), bins=30)
             writer.add_figure("D_reconstructed_his", plt.gcf(), step)
 
-    if step % 1000 == 0:
-
-        patterns = pd.DataFrame(pyro.param("loc_P").detach().to('cpu').numpy())
-        patterns.columns = ['Pattern_' + str(x+1) for x in patterns.columns]
-        patterns.index = data.obs.index
-
-        for pattern in patterns.columns:
-            plot_multisample_scale(patterns.loc[:,pattern], pattern, coords, sampleDf)
-            writer.add_figure(pattern, plt.gcf(), step)
-
-
 endTime = datetime.now()
 print('Runtime: '+ str(round((endTime - startTime).total_seconds())) + ' seconds')
-torch.cuda.memory._dump_snapshot(mem_file)
 
+#%%
 # Save the inferred parameters
-if not os.path.exists(outputDir + savename + '/'):
-    os.makedirs(outputDir + savename + '/')
+if not os.path.exists(outputDir):
+    os.makedirs(outputDir)
 
 #savename = '/disk/kyla/projects/pyro_NMF/results/scaleD_constraint_comparison/' + identifier + '/' + 'ISO_n12'+ identifier
 result_anndata = data.copy()
@@ -204,9 +187,6 @@ scale_A.index = result_anndata.var.index # need names to match anndata names
 result_anndata.varm['scale_A'] = scale_A
 print("Saving scale_A in anndata.varm['scale_A']")
 
-result_anndata.varm['A_mean'] = loc_A/scale_A
-
-
 loc_P = pd.DataFrame(pyro.param("loc_P").detach().to('cpu').numpy())
 loc_P.columns = ['Pattern_' + str(x+1) for x in loc_P.columns]
 loc_P.index = result_anndata.obs.index
@@ -219,30 +199,18 @@ scale_P.index = result_anndata.obs.index
 result_anndata.obsm['scale_P'] = scale_P
 print("Saving scale_P in anndata.obsm['scale_P']")
 
-result_anndata.obsm['P_mean'] = loc_P/scale_P
-
 loc_D = pd.DataFrame(model.D_reconstructed.detach().cpu().numpy())
 loc_D.index = result_anndata.obs.index
 loc_D.columns = result_anndata.var.index # need names to match anndata names
 result_anndata.layers['loc_D'] = loc_D
 print("Saving loc_D in anndata.layers['loc_D']")
 
-#plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = savename + "_loc_P.pdf")
+plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = savename + "_loc_P.pdf")
 
 result_anndata.uns['runtime (seconds)'] = round((endTime - startTime).total_seconds())
 result_anndata.uns['loss'] = pd.DataFrame(losses, index=steps, columns=['loss'])
 
-result_anndata.write_h5ad(outputDir + savename + '/' + savename + '.h5ad')
-
-patterns = loc_P
-for pattern in patterns.columns:
-    plot_multisample_scale(patterns.loc[:,pattern], pattern, coords, sampleDf)
-    plt.savefig(outputDir + savename + '/' + pattern + '.png')
-
-means = loc_P/scale_P
-for mean in means.columns:
-    plot_multisample_scale(means.loc[:,mean], mean, coords, sampleDf)
-    plt.savefig(outputDir + savename + '/' + mean + '_mean.png')
+result_anndata.write_h5ad(outputDir + savename + '.h5ad')
 
 if useTensorboard:
     writer.flush()

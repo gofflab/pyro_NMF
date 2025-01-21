@@ -3,9 +3,9 @@
 import torch
 import pyro
 import pyro.optim
-from cogaps.model import CoGAPSModel, CoGAPSModelWithAtomicPriorGibbs
-from cogaps.guide import CoGAPSGuide, CoGAPSGuideWithAtomicPriorGibbs
-from cogaps.utils import generate_test_data
+from models.model import CoGAPSModel, CoGAPSModelWithAtomicPriorGibbs
+from models.guide import CoGAPSGuide, CoGAPSGuideWithAtomicPriorGibbs
+from models.utils import generate_test_data
 import pyro.poutine as poutine
 from datetime import datetime
 
