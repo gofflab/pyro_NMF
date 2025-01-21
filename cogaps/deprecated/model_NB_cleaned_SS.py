@@ -29,7 +29,7 @@ class GammaMatrixFactorization(PyroModule):
                  num_genes,
                  num_samples,
                  num_patterns,
-                 fixed_patterns = np.array([]),
+                 fixed_patterns,
                  NB_probs = 0.5,
                  device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]):

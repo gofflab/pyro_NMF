@@ -46,20 +46,28 @@ class GammaMatrixFactorization(PyroModule):
         #### Matrix A is patterns x genes ####
         self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device), constraint=dist.constraints.positive)
         self.scale_A = PyroParam(torch.ones(self.num_patterns, self.num_genes, device=self.device),constraint=dist.constraints.positive)
+        print('initialize locA grad? ', self.loc_A.requires_grad)  # Should be True
+        print('initialize scaleA grad? ', self.scale_A.requires_grad)  # Should be True
 
         #### Matrix P is samples x patterns ####
         self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
         self.scale_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
+        print('initialize locP grad? ', self.loc_P.requires_grad)  # Should be True
+        print('initialize scaleP grad? ', self.scale_P.requires_grad)  # Should be True
 
     def forward(self, D):
         # Nested plates for pixel-wise independence?
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
+                #print('loc A grad? ', self.loc_A)
+                #print('scale A grad? ', self.scale_A)
                 A = pyro.sample("A", dist.Gamma(self.loc_A, self.scale_A)) # sample A from Gamma
 
         # Nested plates for pixel-wise independence?
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
+                #print('loc P grad? ', self.loc_P)
+                #print('scale P grad? ', self.scale_P)
                 P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale_P)) # sample P from Gamma
 
         # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
