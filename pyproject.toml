@@ -3,14 +3,23 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyro_NMF"
+name = "pyroNMF"
 version = "0.1.0"
 description = "A Python package for Gamma Matrix Factorization using Pyro"
 authors = [
     {name = "Kyla Woyshner", email = "kwoyshn1@jhmi.edu"}
 ]
 license = {text = "MIT"}
-dependencies = []  # Add required dependencies here
+dependencies = [
+    "pyro-ppl",
+    "pyro-api>=0.1.2",
+    "numpyro>=0.15.3",
+    "tensorboard>=2.17.1",
+    "scipy>=1.14.1",
+    "scanpy>=1.10",
+    "anndata>0.10.9",
+]  # Add required dependencies here
 
-[tool.setuptools.packages.find]
-include = ["pyro_NMF", "pyro_NMF.*"]
+[tool.setuptools]
+packages = ["pyroNMF"]
+package-dir = {"" = "src"}  # Specify that the root package directory is "src"

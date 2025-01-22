@@ -4,7 +4,7 @@ import pyro.distributions as dist
 from pyro.nn import PyroModule
 from pyro.nn.module import PyroParam
 import torch
-from gamma_NB_base import Gamma_NegBinomial_base
+from .gamma_NB_base import Gamma_NegBinomial_base
 
 #%% Enable Validations
 pyro.enable_validation(True)
