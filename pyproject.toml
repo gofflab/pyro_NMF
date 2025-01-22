@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyro_NMF"
+version = "0.1.0"
+description = "A Python package for Gamma Matrix Factorization using Pyro"
+authors = [
+    {name = "Kyla Woyshner", email = "kwoyshn1@jhmi.edu"}
+]
+license = {text = "MIT"}
+dependencies = []  # Add required dependencies here
+
+[tool.setuptools.packages.find]
+include = ["pyro_NMF", "pyro_NMF.*"]
