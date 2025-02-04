@@ -18,6 +18,7 @@ from pyro.infer.autoguide import \
 from torch.utils.data import DataLoader, TensorDataset
 
 from pyroNMF.models.gamma_NB_SSfixed import Gamma_NegBinomial_SSFixed
+#from pyroNMF.models.gamma_NB_base import plot_grid
 #from models.utils import generate_structured_test_data, generate_test_data
 
 import random
@@ -154,14 +155,15 @@ for step in range(1,num_steps+1):
         steps.append(step)
 
     if step % 50 == 0:
-        #plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
-        #writer.add_figure("loc_P", plt.gcf(), step)
+        #plot_grid(patterns, coords, nrows, ncols, savename = None)
+        model.plot_grid(patterns = pyro.param("loc_P").detach().to('cpu').numpy(), coords = coords, nrows=plot_dims[0], ncols=plot_dims[1], savename = None)
+        writer.add_figure("loc_P", plt.gcf(), step)
 
         plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("loc_P_hist", plt.gcf(), step)
 
-        #plot_grid(model.P_total.detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
-        #writer.add_figure("P_total", plt.gcf(), step)
+        model.plot_grid(model.P_total.detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
+        writer.add_figure("P_total", plt.gcf(), step)
 
         plt.hist(model.P_total.detach().to('cpu').numpy().flatten(), bins=30)
         writer.add_figure("P_total_hist", plt.gcf(), step)
@@ -224,7 +226,7 @@ loc_D.index = result_anndata.obs.index
 loc_D.columns = result_anndata.var.index # need names to match anndata names
 result_anndata.layers['loc_D'] = loc_D
 
-#plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = savename + "_loc_P.pdf")
+model.plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = savename + "_loc_P.pdf")
 
 result_anndata.uns['runtime (seconds)'] = round((endTime - startTime).total_seconds())
 result_anndata.uns['loss'] = pd.DataFrame(losses, index=steps, columns=['loss'])

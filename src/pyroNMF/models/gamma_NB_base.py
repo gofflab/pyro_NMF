@@ -4,7 +4,7 @@ import pyro.distributions as dist
 from pyro.nn import PyroModule
 from pyro.nn.module import PyroParam
 import torch
-
+import matplotlib.pyplot as plt
 
 #%% Enable Validations
 pyro.enable_validation(True)
@@ -56,6 +56,32 @@ class Gamma_NegBinomial_base(PyroModule):
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) ## Changed distribution to NegativeBinomial
 
-def guide(D):
-    pass
+    def guide(D):
+        pass
 
+
+    def plot_grid(self, patterns, coords, nrows, ncols, savename = None):
+        fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*4, nrows*4))
+        num_patterns = patterns.shape[1]
+        x, y = coords['x'], coords['y']
+        i = 0
+        for r in range(nrows):
+            for c in range(ncols):
+                if i < num_patterns:
+                    #p5 = np.percentile(patterns[:,i], 5)
+                    #p95 = np.percentile(patterns[:,i], 95)
+                    pattern_min = patterns[:,i].min()
+                    pattern_max = patterns[:,i].max()
+                    #pattern_min = np.min(patterns[:, i])
+                    #pattern_max = np.max(patterns[:, i])
+                    alpha_values = 0.3 + (0.7 * (patterns[:, i] - pattern_min) / (pattern_max - pattern_min))
+                    #axes[r,c].scatter(x, y, c=patterns[:,i], s=8,alpha=np.minimum(alpha_values, 1), vmin=p5, vmax=p95, cmap='viridis',edgecolors='none')
+                    p = axes[r,c].scatter(x, y, c=patterns[:,i], s=4,alpha=alpha_values, vmin=pattern_min, vmax=pattern_max, cmap='viridis',edgecolors='none')
+                    axes[r,c].set_yticklabels([])
+                    axes[r,c].set_xticklabels([])
+                    #axes[r,c].set_title(patterns.columns[i])
+                    i += 1
+
+        if savename != None:
+            plt.savefig(savename)
+# %%

@@ -145,7 +145,7 @@ for step in range(1,num_steps+1):
 
     if step % 50 == 0:
         if useTensorboard:
-            plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
+            model.plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = None)
             writer.add_figure("loc_P", plt.gcf(), step)
 
             plt.hist(pyro.param("loc_P").detach().to('cpu').numpy().flatten(), bins=30)
@@ -210,7 +210,7 @@ loc_D.columns = result_anndata.var.index # need names to match anndata names
 result_anndata.layers['loc_D'] = loc_D
 print("Saving loc_D in anndata.layers['loc_D']")
 
-plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = savename + "_loc_P.pdf")
+model.plot_grid(pyro.param("loc_P").detach().to('cpu').numpy(), coords, plot_dims[0], plot_dims[1], savename = savename + "_loc_P.pdf")
 
 result_anndata.uns['runtime (seconds)'] = round((endTime - startTime).total_seconds())
 result_anndata.uns['loss'] = pd.DataFrame(losses, index=steps, columns=['loss'])
