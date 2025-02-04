@@ -22,14 +22,13 @@ class Gamma_NegBinomial_SSFixed(Gamma_NegBinomial_base):
             ):
         
         super().__init__(num_genes, num_samples, num_patterns, NB_probs, device)
+        self.fixed_patterns = fixed_patterns # of shape samples x fixed patterns
+        self.num_fixed_patterns = fixed_patterns.shape[1]
 
         #### Matrix A is patterns (supervised+unsupervised) x genes ####
         self.loc_A = PyroParam(torch.rand(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device), constraint=dist.constraints.positive)
         self.scale_A = PyroParam(torch.ones(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device),constraint=dist.constraints.positive)
         
-        self.fixed_patterns = fixed_patterns # of shape samples x fixed patterns
-        self.num_fixed_patterns = fixed_patterns.shape[1]
-
         print(f"Using {self.device}")
 
         #### Fixed patterns are samples x patterns ####
