@@ -3,3 +3,8 @@ from . import gamma_NB_batched
 from . import gamma_NB_L2reg
 from . import gamma_NB_SSfixed
 from . import gamma_NB_SSupdate
+from . import gamma_NB_base_sample
+from . import gamma_NB_base_sample_chiSq
+from . import gamma_NB_base_singleScaleFixed
+from . import gamma_NB_base_singleScaleUpdate
+from . import gamma_NB_base_multiScaleUpdate
