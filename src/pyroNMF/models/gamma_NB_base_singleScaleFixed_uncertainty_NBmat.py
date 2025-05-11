@@ -12,53 +12,104 @@ pyro.enable_validation(True)
 #%%
 class Gamma_NegBinomial_base(PyroModule):
     def __init__(self,
-                 num_genes,
-                 num_samples,
-                 num_patterns,
-                 NB_probs = 0.5,
-                 device=torch.device('cpu')
+                num_samples,
+                num_genes,
+                num_patterns,
+                uncertainty,
+                scale = 1,
+                use_chisq = False,
+                #samp = False,
+                NB_probs = None,
+                device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
         
         super().__init__()
 
+        self.num_samples = num_samples
         self.num_genes = num_genes
         self.num_patterns = num_patterns
-        self.num_samples = num_samples
+        self.use_chisq = use_chisq
+        #self.samp = samp
+        #self.samp = samp
+        if NB_probs != None:
+            self.NB_probs = NB_probs
+        else:
+            self.NB_probs = torch.ones(num_samples, num_patterns, device=device) * 0.5
         self.NB_probs = NB_probs
+        self.uncertainty = uncertainty
         self.device = device
+        self.best_chisq = None
+        self.best_chisq_iter = 0
+        self.iter = 0
 
         print(f"Using {self.device}")
-        print("Original")
+        print(f"Data is {self.num_samples} samples x {self.num_genes} genes")
+        print(f"Running for {self.num_patterns} patterns")
+        if use_chisq:
+            print(f"Using chi squared")
+
+
         #### Matrix A is patterns x genes ####
         self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device), constraint=dist.constraints.positive)
-        self.scale_A = PyroParam(torch.ones(self.num_patterns, self.num_genes, device=self.device),constraint=dist.constraints.positive)
+        self.sumA = torch.zeros(self.num_patterns, self.num_genes, device=self.device)
         
         #### Matrix P is samples x patterns ####
         self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
-        self.scale_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
-    
+        self.sumP = torch.zeros(self.num_samples, self.num_patterns, device=self.device)
 
-    def forward(self, D):
+        #### Single updatable scale parameter for gammas ####
+        self.scale = scale
+
+    def forward(self, D, samp):
+
+        self.iter += 1 # keep a running total of iterations
+
         # Nested plates for pixel-wise independence
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
-                A = pyro.sample("A", dist.Gamma(self.loc_A, self.scale_A)) # sample A from Gamma
-                self.A = A
+                #A = pyro.sample("A", dist.Gamma(self.loc_A, self.scale)) # sample A from Gamma
+                A = pyro.sample("A", dist.Gamma(self.loc_A, self.scale)) # sample A from Gamma
+
         # Nested plates for pixel-wise independence
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
-                P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale_P)) # sample P from Gamma
-                self.P = P
-        # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
+                #P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale)) # sample P from Gamma
+                P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale)) # sample P from Gamma
+
+        # Save matrices
+        self.A = A
+        self.P = P
+
+        # D_reconstucted is samples x genes; calculated as the product of P and A
         D_reconstructed = torch.matmul(P, A)  # (samples x genes)
         self.D_reconstructed = D_reconstructed # save D_reconstructed
 
-        pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) ## Changed distribution to NegativeBinomial
-        #pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=D/(D.max()+1)).to_event(2), obs=D) ## Changed distribution to NegativeBinomial
-        #pyro.sample("D", lambda x: D_reconstructed, obs=D)
+        # Calculate chi squared
+        chi2 = torch.sum((D_reconstructed-D)**2/self.uncertainty**2)
+        self.chi2  = chi2
+        
+        if self.best_chisq == None: # first chi squared saved
+            self.best_chisq = chi2
+            self.best_chisq_iter = self.iter
+
+        elif chi2 < self.best_chisq: # if this is a better chi squared, save it
+            self.best_chisq = chi2
+            self.best_chisq_iter = self.iter
+            self.best_A = A
+            self.best_P = P
+
+        # Save sampled values
+        if samp:
+            self.sumA += A
+            self.sumP += P 
 
 
+        # Include chi squared loss in the model
+        if self.use_chisq:
+            pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
+
+        pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
         
 
     #%%

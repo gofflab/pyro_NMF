@@ -38,8 +38,12 @@ class Gamma_NegBinomial_base(PyroModule):
         self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
         self.scale_P = PyroParam(torch.ones(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
     
+        #### Save samples ####
+        self.sumA = torch.zeros(self.num_patterns, self.num_genes, device=self.device)
+        self.sumP = torch.zeros(self.num_samples, self.num_patterns, device=self.device)
 
-    def forward(self, D):
+
+    def forward(self, D, samp = False):
         # Nested plates for pixel-wise independence
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
@@ -50,15 +54,18 @@ class Gamma_NegBinomial_base(PyroModule):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
                 P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale_P)) # sample P from Gamma
                 self.P = P
+
         # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
         D_reconstructed = torch.matmul(P, A)  # (samples x genes)
         self.D_reconstructed = D_reconstructed # save D_reconstructed
 
+        # Save sampled values
+        if samp:
+            self.sumA += A
+            self.sumP += P 
+
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) ## Changed distribution to NegativeBinomial
-        #pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=D/(D.max()+1)).to_event(2), obs=D) ## Changed distribution to NegativeBinomial
-        #pyro.sample("D", lambda x: D_reconstructed, obs=D)
-
-
+        
         
 
     #%%
@@ -66,8 +73,8 @@ class Gamma_NegBinomial_base(PyroModule):
         pass
 
 
-    def plot_grid(self, patterns, coords, nrows, ncols, savename = None):
-        fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*4, nrows*4))
+    def plot_grid(self, patterns, coords, nrows, ncols, s=4, savename = None):
+        fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
         num_patterns = patterns.shape[1]
         x, y = coords['x'], coords['y']
         i = 0
@@ -82,12 +89,38 @@ class Gamma_NegBinomial_base(PyroModule):
                     #pattern_max = np.max(patterns[:, i])
                     alpha_values = 0.3 + (0.7 * (patterns[:, i] - pattern_min) / (pattern_max - pattern_min))
                     #axes[r,c].scatter(x, y, c=patterns[:,i], s=8,alpha=np.minimum(alpha_values, 1), vmin=p5, vmax=p95, cmap='viridis',edgecolors='none')
-                    p = axes[r,c].scatter(x, y, c=patterns[:,i], s=4,alpha=alpha_values, vmin=pattern_min, vmax=pattern_max, cmap='viridis',edgecolors='none')
+                    p = axes[r,c].scatter(x, y, c=patterns[:,i], s=s, alpha=alpha_values, vmin=pattern_min, vmax=pattern_max, cmap='viridis',edgecolors='none')
                     axes[r,c].set_yticklabels([])
                     axes[r,c].set_xticklabels([])
+                    fig.colorbar(p, ax=axes[r,c])
+
                     #axes[r,c].set_title(patterns.columns[i])
                     i += 1
 
         if savename != None:
             plt.savefig(savename)
+
+
+    
+    def plot_grid_noAlpha(self, patterns, coords, nrows, ncols, s=4, savename = None):
+        fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
+        num_patterns = patterns.shape[1]
+        x, y = coords['x'], coords['y']
+        i = 0
+        for r in range(nrows):
+            for c in range(ncols):
+                if i < num_patterns:
+                    pattern_min = patterns[:,i].min()
+                    pattern_max = patterns[:,i].max()
+                    p = axes[r,c].scatter(x, y, c=patterns[:,i], s=s, alpha=1, vmin=pattern_min, vmax=pattern_max, cmap='viridis',edgecolors='none')
+                    axes[r,c].set_yticklabels([])
+                    axes[r,c].set_xticklabels([])
+                    fig.colorbar(p, ax=axes[r,c])
+
+                    #axes[r,c].set_title(patterns.columns[i])
+                    i += 1
+        if savename != None:
+            plt.savefig(savename)
+# %%
+
 # %%
