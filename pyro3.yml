@@ -514,4 +514,5 @@ dependencies:
       - widgetsnbextension==4.0.13
       - xarray==2025.1.2
       - xyzservices==2025.1.0
-prefix: /home/kyla/miniconda3/envs/pyro3
+#prefix: /home/kyla/miniconda3/envs/pyro3
+prefix: /home/kyla/mambaforge/envs/pyro3

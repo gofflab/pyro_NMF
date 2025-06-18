@@ -52,12 +52,12 @@ class Gamma_NegBinomial_base(PyroModule):
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
                 A = pyro.sample("A", dist.Gamma(self.loc_A, self.scale_A)) # sample A from Gamma
-                self.A = A
+        self.A = A
         # Nested plates for pixel-wise independence
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
                 P = pyro.sample("P", dist.Gamma(self.loc_P, self.scale_P)) # sample P from Gamma
-                self.P = P
+        self.P = P
 
         # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
         D_reconstructed = torch.matmul(P, A)  # (samples x genes)
