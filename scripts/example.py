@@ -11,7 +11,7 @@ import pyro
 import pyro.optim
 import torch
 import random
-from pyroNMF.run_v2 import *
+from pyroNMF.run_inference import *
 
 
 #%% LOAD DATA
