@@ -17,9 +17,13 @@ from pyroNMF.run_inference import *
 #%% LOAD DATA
 data = ad.read_h5ad('/raid/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') 
 data = data[data.obsm['atlas']['Isocortex']]
+data.X = data.X.astype(np.float32)
 coords = data.obs.loc[:,['x','y']] # shape: samples x 2
 coords['y'] = -1*coords['y'] # specific for this dataset
 data.obsm['spatial'] = coords.to_numpy() # expects coordinates in 'spatial' if using spatial NMF
+#%%
+print(os.getcwd())
+os.chdir('/raid/kyla/projects/pyro_NMF/')
 
 #%% RUN UNSUPERVISED NMF
 
@@ -37,14 +41,11 @@ data.obsm['spatial'] = coords.to_numpy() # expects coordinates in 'spatial' if u
     # spatial=False: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
     # plot_dims=None: Dimensions of the plot grid, e.g. [5,4] means 5 rows and 4 columns
 
-nmf_res = run_nmf_unsupervised(data, 20, num_steps=10, spatial=True, plot_dims=[5,4], use_tensorboard_id='test_unsupervised')
-pyro.clear_param_store() 
-#%% RUN SUPERVISED P NMF
+#nmf_res = run_nmf_exponential(data, 20, num_steps=1000, spatial=True, plot_dims=[5,4], use_tensorboard_id='test_unsupervised_EXP_')
+#pyro.clear_param_store() 
 
-### Additional parameters:
-# fixed_patterns: DataFrame of fixed patterns to use, shape: samples x num_patterns
-layers = data.obsm['atlas'].loc[:,['SS','MO']]*1 # pass this in as dataframe to preserve names
-nmf_res_sup = run_nmf_supervisedP(data, 20, fixed_patterns=layers, num_steps=10, spatial=True, plot_dims=[5,5], use_tensorboard_id='test_supervised')
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=1000, spatial=True, plot_dims=[5,4], use_tensorboard_id='test_unsupervised_GAMMA_')
+pyro.clear_param_store() 
 
 
 # %%

@@ -54,19 +54,24 @@ class Gamma_NegBinomial_base(PyroModule):
 
         #### Matrix A is patterns x genes ####
         #### Initialize randomly, but with positive constraint ####
-        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device), constraint=dist.constraints.positive)
+        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device, dtype=torch.float32), constraint=dist.constraints.positive)
         
         #### Matrix P is samples x patterns ####
         #### Initialize randomly, but with positive constraint ####
-        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device),constraint=dist.constraints.positive)
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=torch.float32),constraint=dist.constraints.positive)
 
         #### Single fixed scale parameter for gammas ####
         self.scale = scale
 
-        self.best_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device)
-        self.best_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device)
-        self.best_locA = torch.zeros(self.num_patterns, self.num_genes, device=self.device)
-        self.best_locP = torch.zeros(self.num_samples, self.num_patterns, device=self.device)
+        self.best_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=torch.float32)
+        self.best_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=torch.float32)
+        self.best_locA = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=torch.float32)
+        self.best_locP = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=torch.float32)
+
+        #self.A = torch.ones(self.num_patterns, self.num_genes, device=self.device, dtype=torch.float32)
+        #self.P = torch.ones(self.num_samples, self.num_patterns, device=self.device, dtype=torch.float32)
+        self.A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=torch.float32) 
+        self.P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=torch.float32)
 
     def forward(self, D, U):
 

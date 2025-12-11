@@ -11,3 +11,4 @@
 from . import gamma_NB_newBase
 from . import gamma_NB_new_SSfixedP
 from . import gamma_NB_new_SSfixedA
+from . import exp_pois

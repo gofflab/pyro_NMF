@@ -25,7 +25,7 @@ def detect_device():
 
 
 
-def plot_grid(patterns, coords, nrows, ncols, savename = None):
+def plot_grid(patterns, coords, nrows, ncols, size=2, savename = None):
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*4, nrows*4))
     num_patterns = patterns.shape[1]
     x, y = coords[:,0], coords[:,1]
@@ -41,7 +41,7 @@ def plot_grid(patterns, coords, nrows, ncols, savename = None):
                 #pattern_max = np.max(patterns[:, i])
                 alpha_values = 0.3 + (0.7 * (patterns[:, i] - pattern_min) / (pattern_max - pattern_min))
                 #axes[r,c].scatter(x, y, c=patterns[:,i], s=8,alpha=np.minimum(alpha_values, 1), vmin=p5, vmax=p95, cmap='viridis',edgecolors='none')
-                p = axes[r,c].scatter(x, y, c=patterns[:,i], s=4,alpha=alpha_values, vmin=p5, vmax=p95, cmap='viridis',edgecolors='none')
+                p = axes[r,c].scatter(x, y, c=patterns[:,i], s=size,alpha=alpha_values, vmin=p5, vmax=p95, cmap='viridis',edgecolors='none')
                 axes[r,c].set_yticklabels([])
                 axes[r,c].set_xticklabels([])
                 #axes[r,c].set_title(patterns.columns[i])
