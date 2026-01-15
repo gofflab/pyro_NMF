@@ -299,107 +299,93 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             plt.hist(D_reconstructed.flatten(), bins=30)
             writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
 
-
-def _detect_and_save_P_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
+def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
     """
-    Auto-detect and save all P-related parameters from model and param store.
+    Auto-detect and save all model parameters from model and param store.
     
     Parameters:
     - result_anndata: AnnData object to save to
     - model: The trained model
     - fixed_pattern_names: Names of fixed patterns (for supervised)
     - num_learned_patterns: Number of learned patterns (for supervised)
+    - supervised: 'fixed_genes' or 'fixed_samples' or None
+
     """
     store = pyro.get_param_store()
-    
-    # Determine pattern names
-    # Unsupervised: determine from model
-    if hasattr(model, "P"):
-        num_total_patterns = model.P.shape[1]
-    elif "loc_P" in store:
-        num_total_patterns = pyro.param("loc_P").shape[1]
-    else:
-        num_total_patterns = 0
-
+    learned_pattern_names = ["Pattern_" + str(x + 1) for x in range(num_learned_patterns)]
     if fixed_pattern_names is not None:
-        # Supervised: fixed + learned
-        learned_names = ["Pattern_" + str(x + 1) for x in range(num_total_patterns)]
-        pattern_names = [str(x) for x in fixed_pattern_names] + learned_names
-        num_total_patterns = len(pattern_names)
-    else:
-        pattern_names = ["Pattern_" + str(x + 1) for x in range(num_total_patterns)]
-    print("initial names")
-    print(pattern_names)
+        full_pattern_names = [str(x) for x in fixed_pattern_names] + learned_pattern_names
+   
 
-    # Save loc_P if present (Gamma models)
+    ### Save loc_A/P if present (Gamma models)
     if "loc_P" in store:
         loc_P = pd.DataFrame(pyro.param("loc_P").detach().cpu().numpy())
-        if loc_P.shape[1] != num_total_patterns: # this was semisupervised then
-            loc_P.columns = ["Pattern_" + str(x + 1) for x in range(loc_P.shape[1])]
+        if loc_P.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            loc_P.columns = full_pattern_names
         else:
-            loc_P.columns = pattern_names
+            loc_P.columns = learned_pattern_names
         loc_P.index = result_anndata.obs.index
         result_anndata.obsm["loc_P"] = loc_P
         print("Saving loc_P in anndata.obsm['loc_P']")
+    if "loc_A" in store:
+        loc_A = pd.DataFrame(pyro.param("loc_A").detach().cpu().numpy().T)
+        if loc_A.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            loc_A.columns = full_pattern_names
+        else:
+            loc_A.columns = learned_pattern_names
+        loc_A.index = result_anndata.var.index
+        result_anndata.varm["loc_A"] = loc_A
+        print("Saving loc_A in anndata.varm['loc_A']")
     
-    # Save scale_P if present (Exponential models)
+
+    ### Save scale_A/P (scalar) if present (Exponential models)
     if "scale_P" in store:
         scale_P_val = pyro.param("scale_P").detach().cpu().item()
         result_anndata.uns["scale_P"] = scale_P_val
         print(f"Saving scale_P = {scale_P_val} in anndata.uns['scale_P']")
+    if "scale_A" in store:
+        scale_A_val = pyro.param("scale_A").detach().cpu().item()
+        result_anndata.uns["scale_A"] = scale_A_val
+        print(f"Saving scale_A = {scale_A_val} in anndata.uns['scale_A']")
+
     
-    # Save last sampled P
+    ### Save last sampled A/P
     if hasattr(model, "P"):
         last_P = pd.DataFrame(model.P.detach().cpu().numpy())
-        if last_P.shape[1] != num_total_patterns: # this was semisupervised then
-            last_P.columns = ["Pattern_" + str(x + 1) for x in range(last_P.shape[1])]
+        if last_P.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            last_P.columns = full_pattern_names
         else:
-            last_P.columns = pattern_names
+            last_P.columns = learned_pattern_names
         last_P.index = result_anndata.obs.index
         result_anndata.obsm["last_P"] = last_P
         print("Saving final sampled P in anndata.obsm['last_P']")
+    if hasattr(model, "A"):
+        last_A = pd.DataFrame(model.A.detach().cpu().numpy().T)
+        if last_A.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            last_A.columns = full_pattern_names
+        else:
+            last_A.columns = learned_pattern_names
+        last_A.index = result_anndata.var.index
+        result_anndata.varm["last_A"] = last_A
+        print("Saving final sampled A in anndata.varm['last_A']")
 
-    # Save P_total for supervised models with fixed genes
+
+    ### Save A/P_total for supervised models 
     if hasattr(model, "P_total"):
-        P_total_arr = model.P_total.detach().cpu().numpy()
-        P_total_df = pd.DataFrame(P_total_arr)
-        print(P_total_df.shape, num_total_patterns)
-        print(pattern_names)
-        P_total_df.columns = pattern_names
-        P_total_df.index = result_anndata.obs.index
-        result_anndata.obsm["P_total"] = P_total_df
+        P_total = pd.DataFrame(model.P_total.detach().cpu().numpy())
+        P_total.columns = full_pattern_names
+        P_total.index = result_anndata.obs.index
+        result_anndata.obsm["P_total"] = P_total
         print("Saving P_total in anndata.obsm['P_total']")
+    if hasattr(model, "A_total"):
+        A_total = pd.DataFrame(model.A_total.detach().cpu().numpy().T)
+        A_total.columns = full_pattern_names
+        A_total.index = result_anndata.var.index
+        result_anndata.varm["A_total"] = A_total
+        print("Saving A_total in anndata.varm['A_total']")
 
-    # Save best P
-    if hasattr(model, "best_P"):
-        best_P = pd.DataFrame(model.best_P.detach().cpu().numpy())
-        if best_P.shape[1] != num_total_patterns: # this was semisupervised then
-            best_P.columns = ["Pattern_" + str(x + 1) for x in range(best_P.shape[1])]
-        else:
-            best_P.columns = pattern_names
-        #best_P.columns = pattern_names
-        best_P.index = result_anndata.obs.index
-        result_anndata.obsm["best_P"] = best_P
-        print("Saving best P via chi2 in anndata.obsm['best_P']")
-    
-    # Save best locP (Gamma models)
-    if hasattr(model, "best_locP"):
-        best_locP = pd.DataFrame(model.best_locP.detach().cpu().numpy())
-        if best_locP.shape[1] != num_total_patterns: # this was semisupervised then
-            best_locP.columns = ["Pattern_" + str(x + 1) for x in range(best_locP.shape[1])]
-        else:
-            best_locP.columns = pattern_names
-        best_locP.index = result_anndata.obs.index
-        result_anndata.obsm["best_locP"] = best_locP
-        print("Saving best loc P via chi2 in anndata.obsm['best_locP']")
-    
-    # Save best scaleP (Exponential models)
-    if hasattr(model, "best_scaleP"):
-        best_scaleP_val = model.best_scaleP.detach().cpu().item()
-        result_anndata.uns["best_scaleP"] = best_scaleP_val
-        print(f"Saving best scale P = {best_scaleP_val} in anndata.uns['best_scaleP']")
-    
-    # Save fixed P for supervised models
+
+    ### Save fixed A/P for supervised models
     if hasattr(model, "fixed_P"):
         fixed_P = pd.DataFrame(
             model.fixed_P.detach().cpu().numpy(), 
@@ -408,136 +394,80 @@ def _detect_and_save_P_parameters(result_anndata, model, fixed_pattern_names=Non
         )
         result_anndata.obsm["fixed_P"] = fixed_P
         print("Saving fixed P in anndata.obsm['fixed_P']")
-
-
-def _detect_and_save_A_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
-    """
-    Auto-detect and save all A-related parameters from model and param store.
-    
-    Parameters:
-    - result_anndata: AnnData object to save to
-    - model: The trained model
-    - fixed_pattern_names: Names of fixed patterns (for supervised)
-    - num_learned_patterns: Number of learned patterns (for supervised)
-    """
-    store = pyro.get_param_store()
-    if hasattr(model, "A"):
-        num_patterns = model.A.shape[0] if model.A.shape[0] != result_anndata.var.shape[0] else model.A.shape[1]
-    elif "loc_A" in store:
-        loc_A_shape = pyro.param("loc_A").shape
-        num_patterns = loc_A_shape[0] if loc_A_shape[0] != result_anndata.var.shape[0] else loc_A_shape[1]
-    else:
-        num_patterns = 0
-    # Determine pattern names
-
-    if fixed_pattern_names is not None:
-        learned_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
-        pattern_names = [str(x) for x in fixed_pattern_names] + learned_names
-        num_patterns = len(pattern_names)
-    else:
-        pattern_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
-    print("initial names")
-    print(pattern_names)
-    num_genes = result_anndata.var.shape[0]
-    
-    # Save loc_A if present (Gamma models)
-    if "loc_A" in store:
-        loc_A_arr = pyro.param("loc_A").detach().cpu().numpy()
-        loc_A_df = _orient_A_matrix(loc_A_arr, num_genes)
-        if loc_A_df.shape[1] != num_patterns: # this was semisupervised then
-            loc_A_df.columns = ["Pattern_" + str(x + 1) for x in range(loc_A_df.shape[1])]
-        else:
-            loc_A_df.columns = pattern_names
-        loc_A_df.index = result_anndata.var.index
-        result_anndata.varm["loc_A"] = loc_A_df
-        print("Saving loc_A in anndata.varm['loc_A']")
-    
-    # Save scale_A if present (Exponential models)
-    if "scale_A" in store:
-        scale_A_val = pyro.param("scale_A").detach().cpu().item()
-        result_anndata.uns["scale_A"] = scale_A_val
-        print(f"Saving scale_A = {scale_A_val} in anndata.uns['scale_A']")
-    
-    # Save last sampled A
-    if hasattr(model, "A"):
-        last_A_arr = model.A.detach().cpu().numpy()
-        last_A_df = _orient_A_matrix(last_A_arr, num_genes)
-        if last_A_df.shape[1] != num_patterns: # this was semisupervised then
-            last_A_df.columns = ["Pattern_" + str(x + 1) for x in range(last_A_df.shape[1])]
-        else:
-            last_A_df.columns = pattern_names
-        last_A_df.index = result_anndata.var.index
-        result_anndata.varm["last_A"] = last_A_df
-        print("Saving final sampled A in anndata.varm['last_A']")
-    
-    # Save A_total for supervised models with fixed genes
-    if hasattr(model, "A_total"):
-        A_total_arr = model.A_total.detach().cpu().numpy()
-        A_total_df = _orient_A_matrix(A_total_arr, num_genes)
-        A_total_df.columns = pattern_names
-        A_total_df.index = result_anndata.var.index
-        result_anndata.varm["A_total"] = A_total_df
-        print("Saving A_total in anndata.varm['A_total']")
-    
-    # Save best A
-    if hasattr(model, "best_A"):
-        best_A_arr = model.best_A.detach().cpu().numpy()
-        best_A_df = _orient_A_matrix(best_A_arr, num_genes)
-        if best_A_df.shape[1] != num_patterns: # this was semisupervised then
-            best_A_df.columns = ["Pattern_" + str(x + 1) for x in range(best_A_df.shape[1])]
-        else:
-            best_A_df.columns = pattern_names
-        best_A_df.index = result_anndata.var.index
-        result_anndata.varm["best_A"] = best_A_df
-        print("Saving best A via chi2 in anndata.varm['best_A']")
-    
-    # Save best locA (Gamma models)
-    if hasattr(model, "best_locA"):
-        best_locA_arr = model.best_locA.detach().cpu().numpy()
-        best_locA_df = _orient_A_matrix(best_locA_arr, num_genes)
-        if best_locA_df.shape[1] != num_patterns: # this was semisupervised then
-            best_locA_df.columns = ["Pattern_" + str(x + 1) for x in range(best_locA_df.shape[1])]
-        else:
-            best_locA_df.columns = pattern_names
-        best_locA_df.index = result_anndata.var.index
-        result_anndata.varm["best_locA"] = best_locA_df
-        print("Saving best loc A via chi2 in anndata.varm['best_locA']")
-    
-    # Save best scaleA (Exponential models)
-    if hasattr(model, "best_scaleA"):
-        best_scaleA_val = model.best_scaleA.detach().cpu().item()
-        result_anndata.uns["best_scaleA"] = best_scaleA_val
-        print(f"Saving best scale A = {best_scaleA_val} in anndata.uns['best_scaleA']")
-    
-    # Save fixed A for supervised models
     if hasattr(model, "fixed_A"):
-        fixed_A_arr = model.fixed_A.detach().cpu().numpy()
-        fixed_A_df = _orient_A_matrix(fixed_A_arr, num_genes)
-        fixed_A_df.columns = [str(x) for x in fixed_pattern_names]
-        fixed_A_df.index = result_anndata.var.index
-        result_anndata.varm["fixed_A"] = fixed_A_df
+        fixed_A = pd.DataFrame(
+            model.fixed_A.detach().cpu().numpy(), 
+            columns=[str(p) for p in fixed_pattern_names], # make sure they are strings
+            index=result_anndata.var.index
+        )
+        result_anndata.varm["fixed_A"] = fixed_A
         print("Saving fixed A in anndata.varm['fixed_A']")
 
+    ##### Save 'best' parameters based on chi2 ####
 
-def _orient_A_matrix(A_arr, num_genes):
-    """
-    Orient A matrix so genes are rows.
-    
-    Parameters:
-    - A_arr: Numpy array of A matrix
-    - num_genes: Expected number of genes
-    
-    Returns:
-    - A_df: Properly oriented DataFrame
-    """
-    if A_arr.shape[0] == num_genes:
-        return pd.DataFrame(A_arr)
-    else:
-        return pd.DataFrame(A_arr.T)
+    ### Save loc_A/P if present (Gamma models)
+    if hasattr(model, "best_locP"):
+        best_locP = pd.DataFrame(model.best_locP.detach().cpu().numpy())
+        if best_locP.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            best_locP.columns = full_pattern_names
+        else:
+            best_locP.columns = learned_pattern_names
+        best_locP.index = result_anndata.obs.index
+        result_anndata.obsm["best_locP"] = best_locP
+        print("Saving best_locP in anndata.obsm['best_locP']")
+    if hasattr(model, "best_locA"):
+        best_locA = pd.DataFrame(model.best_locA.detach().cpu().numpy().T)
+        if best_locA.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            best_locA.columns = full_pattern_names
+        else:
+            best_locA.columns = learned_pattern_names
+        best_locA.index = result_anndata.var.index
+        result_anndata.varm["best_locA"] = best_locA
+        print("Saving best_locA in anndata.varm['best_locA']")    
+
+    ### Save scale_A/P (scalar) if present (Exponential models)
+    if hasattr(model, "best_scaleP"):
+        scale_P_val = model.best_scaleP.detach().cpu().item()
+        result_anndata.uns["best_scale_P"] = scale_P_val
+        print(f"Saving best_scale_P = {scale_P_val} in anndata.uns['best_scale_P']")
+    if hasattr(model, "best_scaleA"):
+        scale_A_val = model.best_scaleA.detach().cpu().item()
+        result_anndata.uns["best_scale_A"] = scale_A_val
+        print(f"Saving best_scale_A = {scale_A_val} in anndata.uns['best_scale_A']")
+
+    ### Save best sampled A/P
+    if hasattr(model, "best_P"):
+        best_P = pd.DataFrame(model.best_P.detach().cpu().numpy())
+        if best_P.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            best_P.columns = full_pattern_names
+        else:
+            best_P.columns = learned_pattern_names
+        best_P.index = result_anndata.obs.index
+        result_anndata.obsm["best_P"] = best_P
+        print("Saving final sampled P in anndata.obsm['best_P']")
+    if hasattr(model, "best_A"):
+        best_A = pd.DataFrame(model.best_A.detach().cpu().numpy().T)
+        if best_A.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            best_A.columns = full_pattern_names
+        else:
+            best_A.columns = learned_pattern_names
+        best_A.index = result_anndata.var.index
+        result_anndata.varm["best_A"] = best_A
+        print("Saving final sampled A in anndata.varm['best_A']")
+
+    ### Save best sampled A/P with fixed patterns for supervised models
+    if "fixed_P" in result_anndata.obsm and "best_P" in result_anndata.obsm:
+        best_P_total = result_anndata.obsm["fixed_P"].merge(result_anndata.obsm["best_P"], left_index=True, right_index=True)
+        result_anndata.obsm["best_P_total"] = best_P_total
+        print("Saving best_P_total in anndata.obsm['best_P_total']")
+    if "fixed_A" in result_anndata.varm and "best_A" in result_anndata.varm:
+        best_A_total = result_anndata.varm["fixed_A"].merge(result_anndata.varm["best_A"], left_index=True, right_index=True)
+        result_anndata.varm["best_A_total"] = best_A_total
+        print("Saving best_A_total in anndata.varm['best_A_total']")
 
 
 def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, 
-                           fixed_pattern_names=None, num_learned_patterns=None):
+                           fixed_pattern_names=None, num_learned_patterns=None, supervised=None):
     """
     Save results to AnnData object with auto-detection of parameters.
     
@@ -556,10 +486,7 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
     - result_anndata: AnnData object with results
     """
     # Save P parameters
-    _detect_and_save_P_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
-    
-    # Save A parameters
-    _detect_and_save_A_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
+    _detect_and_save_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
     
     # Save metadata
     result_anndata.uns["runtime (seconds)"] = runtime
@@ -657,7 +584,7 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     
     result_anndata = data.copy()
     result_anndata = save_results_to_anndata(
-        result_anndata, model, losses, steps, runtime, scale, settings, num_learned_patterns=num_patterns
+        result_anndata, model, losses, steps, runtime, scale, settings, num_learned_patterns=num_patterns, supervised=None
     )
     
     pyro.clear_param_store()
@@ -712,7 +639,7 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     
     result_anndata = data.copy()
     result_anndata = save_results_to_anndata(
-        result_anndata, model, losses, steps, runtime, scale, settings, fixed_pattern_names=fixed_pattern_names, num_learned_patterns=num_patterns
+        result_anndata, model, losses, steps, runtime, scale, settings, fixed_pattern_names=fixed_pattern_names, num_learned_patterns=num_patterns, supervised=supervision_type
     )
     
     pyro.clear_param_store()
