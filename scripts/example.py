@@ -37,14 +37,107 @@ data.obsm['spatial'] = coords.to_numpy() # expects coordinates in 'spatial' if u
     # spatial=False: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
     # plot_dims=None: Dimensions of the plot grid, e.g. [5,4] means 5 rows and 4 columns
 
-nmf_res = run_nmf_unsupervised(data, 20, num_steps=10, spatial=True, plot_dims=[5,4], use_tensorboard_id='test_unsupervised')
-pyro.clear_param_store() 
-#%% RUN SUPERVISED P NMF
 
-### Additional parameters:
-# fixed_patterns: DataFrame of fixed patterns to use, shape: samples x num_patterns
-layers = data.obsm['atlas'].loc[:,['SS','MO']]*1 # pass this in as dataframe to preserve names
-nmf_res_sup = run_nmf_supervisedP(data, 20, fixed_patterns=layers, num_steps=10, spatial=True, plot_dims=[5,5], use_tensorboard_id='test_supervised')
+##### RUN 1 #####    
+#os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+#nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_pois=False, use_tensorboard_id='unsupervised_gamma_noerror', model_family='gamma')
+#nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_noerror.h5ad')
+#pyro.clear_param_store() 
+
+##### RUN 2 #####    
+#os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+#nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=True, use_pois=False, use_tensorboard_id='unsupervised_gamma_chisqError', model_family='gamma')
+#nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_chisqError.h5ad')
+#pyro.clear_param_store() 
+
+##### RUN 3 #####    
+#os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+#nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = True, use_tensorboard_id='unsupervised_gamma_poisError', model_family='gamma')
+#nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_poisError.h5ad')
+#pyro.clear_param_store() 
+
+
+##### RUN 4 #####    
+#os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+#nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = False, use_tensorboard_id='unsupervised_exponential_noerror', model_family='exponential')
+#nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_noerror.h5ad')
+#pyro.clear_param_store() 
+
+
+##### RUN 5 #####    
+#os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+#nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=True, use_pois = False, use_tensorboard_id='unsupervised_exponential_chisqError', model_family='exponential')
+#nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_chisqError.h5ad')
+#pyro.clear_param_store() 
+
+##### RUN 6 #####    
+#os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+#nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = True, use_tensorboard_id='unsupervised_exponential_poisError', model_family='exponential')
+#nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_poisError.h5ad')
+#pyro.clear_param_store() 
+
+
+
+
+
+
+
+
+##### RUN 1 #####    
+os.chdir('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models') # set working directory for tensorboard logging
+
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_pois=False, use_tensorboard_id='unsupervised_gamma_noerror_2', model_family='gamma')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_noerror_2.h5ad')
+pyro.clear_param_store() 
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_pois=False, use_tensorboard_id='unsupervised_gamma_noerror_3', model_family='gamma')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_noerror_3.h5ad')
+pyro.clear_param_store() 
+
+##### RUN 2 #####    
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=True, use_pois=False, use_tensorboard_id='unsupervised_gamma_chisqError_2', model_family='gamma')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_chisqError_2.h5ad')
+pyro.clear_param_store() 
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=True, use_pois=False, use_tensorboard_id='unsupervised_gamma_chisqError_3', model_family='gamma')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_chisqError_3.h5ad')
+pyro.clear_param_store() 
+
+##### RUN 3 #####    
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = True, use_tensorboard_id='unsupervised_gamma_poisError_2', model_family='gamma')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_poisError_2.h5ad')
+pyro.clear_param_store() 
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = True, use_tensorboard_id='unsupervised_gamma_poisError_3', model_family='gamma')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_gamma_poisError_3.h5ad')
+pyro.clear_param_store() 
+
+
+##### RUN 4 #####    
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = False, use_tensorboard_id='unsupervised_exponential_noerror_2', model_family='exponential')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_noerror_2.h5ad')
+pyro.clear_param_store() 
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = False, use_tensorboard_id='unsupervised_exponential_noerror_3', model_family='exponential')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_noerror_3.h5ad')
+pyro.clear_param_store()
+
+##### RUN 5 #####    
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=True, use_pois = False, use_tensorboard_id='unsupervised_exponential_chisqError_2', model_family='exponential')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_chisqError_2.h5ad')
+pyro.clear_param_store() 
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=True, use_pois = False, use_tensorboard_id='unsupervised_exponential_chisqError_3', model_family='exponential')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_chisqError_3.h5ad')
+pyro.clear_param_store()
+
+##### RUN 6 #####    
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = True, use_tensorboard_id='unsupervised_exponential_poisError_2', model_family='exponential')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_poisError_2.h5ad')
+pyro.clear_param_store() 
+nmf_res = run_nmf_unsupervised(data, 20, num_steps=10000, spatial=True, plot_dims=[5,4], use_chisq=False, use_pois = True, use_tensorboard_id='unsupervised_exponential_poisError_3', model_family='exponential')
+nmf_res.write_h5ad('/raid/kyla/projects/pyro_NMF/analyses/20250108_compare_models/unsupervised_exponential_poisError_3.h5ad')
+pyro.clear_param_store()
+
+
+
+
+
 
 
 # %%

@@ -1,7 +1,15 @@
 import torch
-from pyroNMF.models.gamma_NB_newBase import Gamma_NegBinomial_base
-from pyroNMF.models.gamma_NB_new_SSfixedP import Gamma_NegBinomial_SSFixed
-from pyroNMF.models.exp_pois import ExpMatrixFactorization
+
+from pyroNMF.models.gamma_NB_models import (
+    Gamma_NegBinomial_base,
+    Gamma_NegBinomial_SSFixedGenes,
+    Gamma_NegBinomial_SSFixedSamples
+)
+from pyroNMF.models.exp_pois_models import (
+    Exponential_base,
+    Exponential_SSFixedGenes,
+    Exponential_SSFixedSamples
+)
 from pyroNMF.utils import detect_device, plot_grid, plot_grid_noAlpha
 from torch.utils.tensorboard import SummaryWriter
 import os
@@ -17,6 +25,7 @@ import pyro.optim
 import torch
 from pyro.infer.autoguide import AutoNormal
 
+default_dtype = torch.float32
 
 def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
     """
@@ -35,7 +44,7 @@ def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
     - ValueError: If validation fails
     """
     print("Running validate_data")
-    D = torch.tensor(data.X)
+    D = torch.tensor(data.X) if not hasattr(data.X, 'toarray') else torch.tensor(data.X.toarray())
     coords = None
     
     perc_zeros = (D == 0).sum().sum() / (D.shape[0] * D.shape[1])
@@ -76,21 +85,21 @@ def prepare_tensors(data, device=None):
     print(f"Selecting device {device}")
     print(f"preparing tensors")
     
-    #D = torch.tensor(data.X).to(device)
-    if hasattr(data.X, 'toarray'):  # If sparse matrix
+    if hasattr(data.X, 'toarray'):
         print('Setting sparse D')
-        D = torch.tensor(data.X.toarray(), dtype=torch.float32).to(device)
+        D = torch.tensor(data.X.toarray(), dtype=default_dtype).to(device)
     else:
         print('Setting D')
-        D = torch.tensor(data.X, dtype=torch.float32).to(device)
-    U = (D * 0.1).clip(min=0.3).to(device)  # Probability for NegativeBinomial
-    scale = (D.cpu().numpy().std()) * 2
+        D = torch.tensor(data.X, dtype=default_dtype).to(device)
+    U = (D * 0.1).clip(min=0.3).to(device)
+    scale = torch.tensor((D.cpu().numpy().std()) * 2, dtype=default_dtype, device=device)
     
     return D, U, scale, device
 
 
-def setup_model_and_optimizer(D, num_patterns, scale, NB_probs, use_chisq, device, 
-                             fixed_patterns=None, model_type='unsupervised'):
+def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None,
+                             fixed_patterns=None, model_type='gamma_unsupervised',
+                             supervision_type=None):
     """
     Setup the NMF model and optimizer.
     
@@ -102,7 +111,8 @@ def setup_model_and_optimizer(D, num_patterns, scale, NB_probs, use_chisq, devic
     - use_chisq: Whether to use chi-squared loss
     - device: Device to run on
     - fixed_patterns: Fixed patterns for supervised learning
-    - model_type: 'unsupervised' or 'supervised'
+    - model_type: 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', 'exponential_supervised'
+    - supervision_type: 'fixed_genes' or 'fixed_samples' (for supervised models)
     
     Returns:
     - model: Initialized model
@@ -110,25 +120,50 @@ def setup_model_and_optimizer(D, num_patterns, scale, NB_probs, use_chisq, devic
     - svi: SVI optimizer
     """
     # Instantiate the model
-    if model_type == 'unsupervised':
+    if model_type == 'gamma_unsupervised':
         model = Gamma_NegBinomial_base(
             D.shape[0], D.shape[1], num_patterns, 
-            use_chisq=use_chisq, scale=scale, 
+            use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
             NB_probs=NB_probs, device=device
         )
-    elif model_type == 'supervised':
-        model = Gamma_NegBinomial_SSFixed(
+    elif model_type == 'gamma_supervised':
+        if supervision_type == 'fixed_genes':
+            model = Gamma_NegBinomial_SSFixedGenes(
+                D.shape[0], D.shape[1], num_patterns, 
+                fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
+                scale=scale, NB_probs=NB_probs, device=device
+            )
+        elif supervision_type == 'fixed_samples':
+            model = Gamma_NegBinomial_SSFixedSamples(
+                D.shape[0], D.shape[1], num_patterns, 
+                fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
+                scale=scale, NB_probs=NB_probs, device=device
+            )
+        else:
+            raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
+        
+    elif model_type == 'exponential_unsupervised':
+        model = Exponential_base(
             D.shape[0], D.shape[1], num_patterns, 
-            fixed_patterns=fixed_patterns, use_chisq=use_chisq, 
-            scale=scale, NB_probs=NB_probs, device=device
+            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
         )
-    elif model_type == 'exponential':
-        model = ExpMatrixFactorization(
-            D.shape[0], D.shape[1], num_patterns, use_chisq=use_chisq,
-            sparsity=(D == 0).sum().sum() / (D.shape[0] * D.shape[1]), device=device
-        )
+    elif model_type == 'exponential_supervised':
+        if supervision_type == 'fixed_genes':
+            model = Exponential_SSFixedGenes(
+                D.shape[0], D.shape[1], num_patterns, 
+                fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
+                NB_probs=NB_probs, device=device
+            )
+        elif supervision_type == 'fixed_samples':
+            model = Exponential_SSFixedSamples(
+                D.shape[0], D.shape[1], num_patterns, 
+                fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
+                NB_probs=NB_probs, device=device
+            )
+        else:
+            raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
     else:
-        raise ValueError("model_type must be 'unsupervised' or 'supervised' or 'exponential")
+        raise ValueError("model_type must be 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', or 'exponential_supervised'")
     
     # Setup guide and optimizer
     guide = AutoNormal(model)
@@ -214,14 +249,15 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
         writer.add_scalar("Saved chi-squared iter", int(getattr(model, "best_chisq_iter", 0)), step)
     if hasattr(model, "chi2"):
         writer.add_scalar("Chi-squared", float(getattr(model, "chi2")), step)
+    if hasattr(model, "pois"):
+        writer.add_scalar("Poisson loss", float(getattr(model, "pois")), step)
     writer.flush()
     
     if step % 50 == 0:
         if spatial and coords is not None and plot_dims is not None:
-            # Plot loc_P if available
             store = pyro.get_param_store()
+            # Plot loc_P if available
             if 'loc_P' in store:
-#            if pyro.get_param_store().get("loc_P") is not None:
                 try:
                     locP = pyro.param("loc_P").detach().cpu().numpy()
                     plot_grid(locP, coords, plot_dims[0], plot_dims[1], savename=None)
@@ -237,18 +273,24 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
                 except Exception:
                     pass
 
-        # Histograms of loc_P and loc_A if present
+        # Histograms of parameters
         store = pyro.get_param_store()
         if 'loc_P' in store:
-        #if pyro.get_param_store().get("loc_P") is not None:
             plt.figure()
             plt.hist(pyro.param("loc_P").detach().cpu().numpy().flatten(), bins=30)
             writer.add_figure("loc_P_hist", plt.gcf(), step)
         if 'loc_A' in store:
-#        if pyro.get_param_store().get("loc_A") is not None:
             plt.figure()
             plt.hist(pyro.param("loc_A").detach().cpu().numpy().flatten(), bins=30)
             writer.add_figure("loc_A_hist", plt.gcf(), step)
+        if 'scale_A' in store:
+            plt.figure()
+            plt.hist(pyro.param("scale_A").detach().cpu().numpy().flatten(), bins=30)
+            writer.add_figure("scale_A_hist", plt.gcf(), step)
+        if 'scale_P' in store:
+            plt.figure()
+            plt.hist(pyro.param("scale_P").detach().cpu().numpy().flatten(), bins=30)
+            writer.add_figure("scale_P_hist", plt.gcf(), step)
 
     if step % 100 == 0:
         if hasattr(model, "D_reconstructed"):
@@ -258,218 +300,286 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
 
 
-def save_results_to_anndata(data, model, losses, steps, runtime, scale, settings, 
-                           model_type='unsupervised', fixed_pattern_names=None):
+def _detect_and_save_P_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
     """
-    Save results to AnnData object.
+    Auto-detect and save all P-related parameters from model and param store.
     
     Parameters:
-    - data: Original AnnData object
+    - result_anndata: AnnData object to save to
+    - model: The trained model
+    - fixed_pattern_names: Names of fixed patterns (for supervised)
+    - num_learned_patterns: Number of learned patterns (for supervised)
+    """
+    store = pyro.get_param_store()
+    
+    # Determine pattern names
+    # Unsupervised: determine from model
+    if hasattr(model, "P"):
+        num_total_patterns = model.P.shape[1]
+    elif "loc_P" in store:
+        num_total_patterns = pyro.param("loc_P").shape[1]
+    else:
+        num_total_patterns = 0
+
+    if fixed_pattern_names is not None:
+        # Supervised: fixed + learned
+        learned_names = ["Pattern_" + str(x + 1) for x in range(num_total_patterns)]
+        pattern_names = [str(x) for x in fixed_pattern_names] + learned_names
+        num_total_patterns = len(pattern_names)
+    else:
+        pattern_names = ["Pattern_" + str(x + 1) for x in range(num_total_patterns)]
+    print("initial names")
+    print(pattern_names)
+
+    # Save loc_P if present (Gamma models)
+    if "loc_P" in store:
+        loc_P = pd.DataFrame(pyro.param("loc_P").detach().cpu().numpy())
+        if loc_P.shape[1] != num_total_patterns: # this was semisupervised then
+            loc_P.columns = ["Pattern_" + str(x + 1) for x in range(loc_P.shape[1])]
+        else:
+            loc_P.columns = pattern_names
+        loc_P.index = result_anndata.obs.index
+        result_anndata.obsm["loc_P"] = loc_P
+        print("Saving loc_P in anndata.obsm['loc_P']")
+    
+    # Save scale_P if present (Exponential models)
+    if "scale_P" in store:
+        scale_P_val = pyro.param("scale_P").detach().cpu().item()
+        result_anndata.uns["scale_P"] = scale_P_val
+        print(f"Saving scale_P = {scale_P_val} in anndata.uns['scale_P']")
+    
+    # Save last sampled P
+    if hasattr(model, "P"):
+        last_P = pd.DataFrame(model.P.detach().cpu().numpy())
+        if last_P.shape[1] != num_total_patterns: # this was semisupervised then
+            last_P.columns = ["Pattern_" + str(x + 1) for x in range(last_P.shape[1])]
+        else:
+            last_P.columns = pattern_names
+        last_P.index = result_anndata.obs.index
+        result_anndata.obsm["last_P"] = last_P
+        print("Saving final sampled P in anndata.obsm['last_P']")
+
+    # Save P_total for supervised models with fixed genes
+    if hasattr(model, "P_total"):
+        P_total_arr = model.P_total.detach().cpu().numpy()
+        P_total_df = pd.DataFrame(P_total_arr)
+        print(P_total_df.shape, num_total_patterns)
+        print(pattern_names)
+        P_total_df.columns = pattern_names
+        P_total_df.index = result_anndata.obs.index
+        result_anndata.obsm["P_total"] = P_total_df
+        print("Saving P_total in anndata.obsm['P_total']")
+
+    # Save best P
+    if hasattr(model, "best_P"):
+        best_P = pd.DataFrame(model.best_P.detach().cpu().numpy())
+        if best_P.shape[1] != num_total_patterns: # this was semisupervised then
+            best_P.columns = ["Pattern_" + str(x + 1) for x in range(best_P.shape[1])]
+        else:
+            best_P.columns = pattern_names
+        #best_P.columns = pattern_names
+        best_P.index = result_anndata.obs.index
+        result_anndata.obsm["best_P"] = best_P
+        print("Saving best P via chi2 in anndata.obsm['best_P']")
+    
+    # Save best locP (Gamma models)
+    if hasattr(model, "best_locP"):
+        best_locP = pd.DataFrame(model.best_locP.detach().cpu().numpy())
+        if best_locP.shape[1] != num_total_patterns: # this was semisupervised then
+            best_locP.columns = ["Pattern_" + str(x + 1) for x in range(best_locP.shape[1])]
+        else:
+            best_locP.columns = pattern_names
+        best_locP.index = result_anndata.obs.index
+        result_anndata.obsm["best_locP"] = best_locP
+        print("Saving best loc P via chi2 in anndata.obsm['best_locP']")
+    
+    # Save best scaleP (Exponential models)
+    if hasattr(model, "best_scaleP"):
+        best_scaleP_val = model.best_scaleP.detach().cpu().item()
+        result_anndata.uns["best_scaleP"] = best_scaleP_val
+        print(f"Saving best scale P = {best_scaleP_val} in anndata.uns['best_scaleP']")
+    
+    # Save fixed P for supervised models
+    if hasattr(model, "fixed_P"):
+        fixed_P = pd.DataFrame(
+            model.fixed_P.detach().cpu().numpy(), 
+            columns=[str(p) for p in fixed_pattern_names], # make sure they are strings
+            index=result_anndata.obs.index
+        )
+        result_anndata.obsm["fixed_P"] = fixed_P
+        print("Saving fixed P in anndata.obsm['fixed_P']")
+
+
+def _detect_and_save_A_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
+    """
+    Auto-detect and save all A-related parameters from model and param store.
+    
+    Parameters:
+    - result_anndata: AnnData object to save to
+    - model: The trained model
+    - fixed_pattern_names: Names of fixed patterns (for supervised)
+    - num_learned_patterns: Number of learned patterns (for supervised)
+    """
+    store = pyro.get_param_store()
+    if hasattr(model, "A"):
+        num_patterns = model.A.shape[0] if model.A.shape[0] != result_anndata.var.shape[0] else model.A.shape[1]
+    elif "loc_A" in store:
+        loc_A_shape = pyro.param("loc_A").shape
+        num_patterns = loc_A_shape[0] if loc_A_shape[0] != result_anndata.var.shape[0] else loc_A_shape[1]
+    else:
+        num_patterns = 0
+    # Determine pattern names
+
+    if fixed_pattern_names is not None:
+        learned_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
+        pattern_names = [str(x) for x in fixed_pattern_names] + learned_names
+        num_patterns = len(pattern_names)
+    else:
+        pattern_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
+    print("initial names")
+    print(pattern_names)
+    num_genes = result_anndata.var.shape[0]
+    
+    # Save loc_A if present (Gamma models)
+    if "loc_A" in store:
+        loc_A_arr = pyro.param("loc_A").detach().cpu().numpy()
+        loc_A_df = _orient_A_matrix(loc_A_arr, num_genes)
+        if loc_A_df.shape[1] != num_patterns: # this was semisupervised then
+            loc_A_df.columns = ["Pattern_" + str(x + 1) for x in range(loc_A_df.shape[1])]
+        else:
+            loc_A_df.columns = pattern_names
+        loc_A_df.index = result_anndata.var.index
+        result_anndata.varm["loc_A"] = loc_A_df
+        print("Saving loc_A in anndata.varm['loc_A']")
+    
+    # Save scale_A if present (Exponential models)
+    if "scale_A" in store:
+        scale_A_val = pyro.param("scale_A").detach().cpu().item()
+        result_anndata.uns["scale_A"] = scale_A_val
+        print(f"Saving scale_A = {scale_A_val} in anndata.uns['scale_A']")
+    
+    # Save last sampled A
+    if hasattr(model, "A"):
+        last_A_arr = model.A.detach().cpu().numpy()
+        last_A_df = _orient_A_matrix(last_A_arr, num_genes)
+        if last_A_df.shape[1] != num_patterns: # this was semisupervised then
+            last_A_df.columns = ["Pattern_" + str(x + 1) for x in range(last_A_df.shape[1])]
+        else:
+            last_A_df.columns = pattern_names
+        last_A_df.index = result_anndata.var.index
+        result_anndata.varm["last_A"] = last_A_df
+        print("Saving final sampled A in anndata.varm['last_A']")
+    
+    # Save A_total for supervised models with fixed genes
+    if hasattr(model, "A_total"):
+        A_total_arr = model.A_total.detach().cpu().numpy()
+        A_total_df = _orient_A_matrix(A_total_arr, num_genes)
+        A_total_df.columns = pattern_names
+        A_total_df.index = result_anndata.var.index
+        result_anndata.varm["A_total"] = A_total_df
+        print("Saving A_total in anndata.varm['A_total']")
+    
+    # Save best A
+    if hasattr(model, "best_A"):
+        best_A_arr = model.best_A.detach().cpu().numpy()
+        best_A_df = _orient_A_matrix(best_A_arr, num_genes)
+        if best_A_df.shape[1] != num_patterns: # this was semisupervised then
+            best_A_df.columns = ["Pattern_" + str(x + 1) for x in range(best_A_df.shape[1])]
+        else:
+            best_A_df.columns = pattern_names
+        best_A_df.index = result_anndata.var.index
+        result_anndata.varm["best_A"] = best_A_df
+        print("Saving best A via chi2 in anndata.varm['best_A']")
+    
+    # Save best locA (Gamma models)
+    if hasattr(model, "best_locA"):
+        best_locA_arr = model.best_locA.detach().cpu().numpy()
+        best_locA_df = _orient_A_matrix(best_locA_arr, num_genes)
+        if best_locA_df.shape[1] != num_patterns: # this was semisupervised then
+            best_locA_df.columns = ["Pattern_" + str(x + 1) for x in range(best_locA_df.shape[1])]
+        else:
+            best_locA_df.columns = pattern_names
+        best_locA_df.index = result_anndata.var.index
+        result_anndata.varm["best_locA"] = best_locA_df
+        print("Saving best loc A via chi2 in anndata.varm['best_locA']")
+    
+    # Save best scaleA (Exponential models)
+    if hasattr(model, "best_scaleA"):
+        best_scaleA_val = model.best_scaleA.detach().cpu().item()
+        result_anndata.uns["best_scaleA"] = best_scaleA_val
+        print(f"Saving best scale A = {best_scaleA_val} in anndata.uns['best_scaleA']")
+    
+    # Save fixed A for supervised models
+    if hasattr(model, "fixed_A"):
+        fixed_A_arr = model.fixed_A.detach().cpu().numpy()
+        fixed_A_df = _orient_A_matrix(fixed_A_arr, num_genes)
+        fixed_A_df.columns = [str(x) for x in fixed_pattern_names]
+        fixed_A_df.index = result_anndata.var.index
+        result_anndata.varm["fixed_A"] = fixed_A_df
+        print("Saving fixed A in anndata.varm['fixed_A']")
+
+
+def _orient_A_matrix(A_arr, num_genes):
+    """
+    Orient A matrix so genes are rows.
+    
+    Parameters:
+    - A_arr: Numpy array of A matrix
+    - num_genes: Expected number of genes
+    
+    Returns:
+    - A_df: Properly oriented DataFrame
+    """
+    if A_arr.shape[0] == num_genes:
+        return pd.DataFrame(A_arr)
+    else:
+        return pd.DataFrame(A_arr.T)
+
+
+def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, 
+                           fixed_pattern_names=None, num_learned_patterns=None):
+    """
+    Save results to AnnData object with auto-detection of parameters.
+    
+    Parameters:
+    - result_anndata: AnnData object to save to
     - model: Trained model
     - losses: Training losses
     - steps: Training steps
     - runtime: Training runtime
     - scale: Scale factor used
     - settings: Training settings
-    - model_type: 'unsupervised' or 'supervised'
     - fixed_pattern_names: Names of fixed patterns (for supervised)
+    - num_learned_patterns: Number of learned patterns (for supervised)
     
     Returns:
     - result_anndata: AnnData object with results
     """
-    result_anndata = data.copy()
+    # Save P parameters
+    _detect_and_save_P_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
     
-    # Common results
-    _save_common_results(result_anndata, model, losses, steps, runtime, scale, settings)
+    # Save A parameters
+    _detect_and_save_A_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
     
-    # Model-specific results
-    if model_type == 'unsupervised':
-        _save_unsupervised_results(result_anndata, model)
-    elif model_type == 'supervised':
-        _save_supervised_results(result_anndata, model, fixed_pattern_names)
-    #pyro.clear_param_store()
-    return result_anndata
-
-
-def _save_common_results(result_anndata, model, losses, steps, runtime, scale, settings):
-    """Save common results for both supervised and unsupervised models."""
-    # Save loc_P if present
-    store = pyro.get_param_store()
-
-    if "loc_P" in store:
-        loc_P = pd.DataFrame(pyro.param("loc_P").detach().cpu().numpy())
-        loc_P.columns = ["Pattern_" + str(x + 1) for x in loc_P.columns]
-        loc_P.index = result_anndata.obs.index
-        result_anndata.obsm["loc_P"] = loc_P
-        print("Saving loc_P in anndata.obsm['loc_P']")
-
-    # Save last sampled P if model has P
-    if hasattr(model, "P"):
-        last_P = pd.DataFrame(model.P.detach().cpu().numpy())
-        last_P.columns = ["Pattern_" + str(x + 1) for x in last_P.columns]
-        last_P.index = result_anndata.obs.index
-        result_anndata.obsm["last_P"] = last_P
-        print("Saving final sampled P in anndata.obsm['last_P']")
-
-    # Save best P if present
-    if hasattr(model, "best_P"):
-        best_P = pd.DataFrame(model.best_P.detach().cpu().numpy())
-        best_P.columns = ["Pattern_" + str(x + 1) for x in best_P.columns]
-        best_P.index = result_anndata.obs.index
-        result_anndata.obsm["best_P"] = best_P
-        print("Saving best P via chi2 in anndata.obsm['best_P']")
-
-    # Save best locP if present
-    if hasattr(model, "best_locP"):
-        best_locP = pd.DataFrame(model.best_locP.detach().cpu().numpy())
-        best_locP.columns = ["Pattern_" + str(x + 1) for x in best_locP.columns]
-        best_locP.index = result_anndata.obs.index
-        result_anndata.obsm["best_locP"] = best_locP
-        print("Saving best loc P via chi2 in anndata.obsm['best_locP']")
-
     # Save metadata
     result_anndata.uns["runtime (seconds)"] = runtime
     result_anndata.uns["loss"] = pd.DataFrame(losses, index=steps, columns=["loss"])
     if hasattr(model, "best_chisq_iter"):
         result_anndata.uns["step_w_bestChisq"] = model.best_chisq_iter
-    result_anndata.uns["scale"] = scale
-    result_anndata.uns["settings"] = pd.DataFrame(list(settings.values()), index=list(settings.keys()), columns=["settings"])
-
-
-def _save_unsupervised_results(result_anndata, model):
-    """Save results specific to unsupervised model."""
-    # Save loc_A if present
-    store = pyro.get_param_store()
-
-    if "loc_A" in store:
-        loc_A_arr = pyro.param("loc_A").detach().cpu().numpy()
-        # Expecting loc_A to be (genes x patterns) or (patterns x genes)
-        if loc_A_arr.shape[0] == result_anndata.var.shape[0]:
-            loc_A_df = pd.DataFrame(loc_A_arr)
-        elif loc_A_arr.shape[1] == result_anndata.var.shape[0]:
-            loc_A_df = pd.DataFrame(loc_A_arr.T)
-        else:
-            # fallback: try to coerce with transpose
-            loc_A_df = pd.DataFrame(loc_A_arr).T
-
-        loc_A_df.columns = ["Pattern_" + str(x + 1) for x in loc_A_df.columns]
-        loc_A_df.index = result_anndata.var.index
-        result_anndata.varm["loc_A"] = loc_A_df
-        print("Saving loc_A in anndata.varm['loc_A']")
-
-    # Save last sampled A if model has A
-    if hasattr(model, "A"):
-        last_A = pd.DataFrame(model.A.detach().cpu().numpy())
-        # Ensure genes are rows
-        if last_A.shape[0] == result_anndata.var.shape[0]:
-            last_A_df = last_A
-        else:
-            last_A_df = last_A.T
-        last_A_df.columns = ["Pattern_" + str(x + 1) for x in last_A_df.columns]
-        last_A_df.index = result_anndata.var.index
-        result_anndata.varm["last_A"] = last_A_df
-        print("Saving final sampled A in anndata.varm['last_A']")
-
-    # Save best A if present
-    if hasattr(model, "best_A"):
-        best_A = pd.DataFrame(model.best_A.detach().cpu().numpy())
-        if best_A.shape[0] == result_anndata.var.shape[0]:
-            best_A_df = best_A
-        else:
-            best_A_df = best_A.T
-        best_A_df.columns = ["Pattern_" + str(x + 1) for x in best_A_df.columns]
-        best_A_df.index = result_anndata.var.index
-        result_anndata.varm["best_A"] = best_A_df
-        print("Saving best A via chi2 in anndata.varm['best_A']")
-
-    # Save best locA if present
-    if hasattr(model, "best_locA"):
-        best_locA_arr = model.best_locA.detach().cpu().numpy()
-        if best_locA_arr.shape[0] == result_anndata.var.shape[0]:
-            best_locA_df = pd.DataFrame(best_locA_arr)
-        else:
-            best_locA_df = pd.DataFrame(best_locA_arr.T)
-        best_locA_df.columns = ["Pattern_" + str(x + 1) for x in best_locA_df.columns]
-        best_locA_df.index = result_anndata.var.index
-        result_anndata.varm["best_locA"] = best_locA_df
-        print("Saving best loc A via chi2 in anndata.varm['best_locA']")
-
-
-def _save_supervised_results(result_anndata, model, fixed_pattern_names):
-    """Save results specific to supervised model."""
-    num_patterns = model.P.shape[1] if hasattr(model, "P") else 0
-    store = pyro.get_param_store()
-    if "loc_A" in store:
-    # Save loc_A
-    #if pyro.get_param_store().get("loc_A") is not None:
-        loc_A_arr = pyro.param("loc_A").detach().cpu().numpy()
-        if loc_A_arr.shape[0] == result_anndata.var.shape[0]:
-            loc_A_df = pd.DataFrame(loc_A_arr)
-        else:
-            loc_A_df = pd.DataFrame(loc_A_arr.T)
-        learned_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
-        loc_A_df.columns = fixed_pattern_names + learned_names
-        loc_A_df.index = result_anndata.var.index
-        result_anndata.varm["loc_A"] = loc_A_df
-        print("Saving loc_A in anndata.varm['loc_A']")
-
-    # Save last sampled A
-    if hasattr(model, "A"):
-        last_A_arr = model.A.detach().cpu().numpy()
-        if last_A_arr.shape[0] == result_anndata.var.shape[0]:
-            last_A_df = pd.DataFrame(last_A_arr)
-        else:
-            last_A_df = pd.DataFrame(last_A_arr.T)
-        learned_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
-        last_A_df.columns = fixed_pattern_names + learned_names
-        last_A_df.index = result_anndata.var.index
-        result_anndata.varm["last_A"] = last_A_df
-        print("Saving final sampled A in anndata.varm['last_A']")
-
-    # Save fixed P
-    if hasattr(model, "fixed_P"):
-        fixed_P = pd.DataFrame(model.fixed_P.detach().cpu().numpy(), columns=fixed_pattern_names, index=result_anndata.obs.index)
-        result_anndata.obsm["fixed_P"] = fixed_P
-        print("Saving fixed P in anndata.obsm['fixed_P']")
-
-    # Save best P total (fixed + learned)
-    if "best_P" in result_anndata.obsm and hasattr(model, "fixed_P"):
-        best_P = result_anndata.obsm["best_P"]
-        best_P_total = pd.concat([fixed_P, best_P], axis=1)
-        result_anndata.obsm["best_P_total"] = best_P_total
-        print("Saving best P total in anndata.obsm['best_P_total']")
-
-    # Save best A
-    if hasattr(model, "best_A"):
-        best_A_arr = model.best_A.detach().cpu().numpy()
-        if best_A_arr.shape[0] == result_anndata.var.shape[0]:
-            best_A_df = pd.DataFrame(best_A_arr)
-        else:
-            best_A_df = pd.DataFrame(best_A_arr.T)
-        learned_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
-        best_A_df.columns = fixed_pattern_names + learned_names
-        best_A_df.index = result_anndata.var.index
-        result_anndata.varm["best_A"] = best_A_df
-        print("Saving best A via chi2 in anndata.varm['best_A']")
-
-    # Save best locA
-    if hasattr(model, "best_locA"):
-        best_locA_arr = model.best_locA.detach().cpu().numpy()
-        if best_locA_arr.shape[0] == result_anndata.var.shape[0]:
-            best_locA_df = pd.DataFrame(best_locA_arr)
-        else:
-            best_locA_df = pd.DataFrame(best_locA_arr.T)
-        learned_names = ["Pattern_" + str(x + 1) for x in range(num_patterns)]
-        best_locA_df.columns = fixed_pattern_names + learned_names
-        best_locA_df.index = result_anndata.var.index
-        result_anndata.varm["best_locA"] = best_locA_df
-        print("Saving best loc A via chi2 in anndata.varm['best_locA']")
-
-
+    if hasattr(model, "best_chisq"):
+        result_anndata.uns["best_chisq"] = float(model.best_chisq)
+    result_anndata.uns["scale"] = scale.detach().cpu().item()
+    result_anndata.uns["settings"] = pd.DataFrame(
+        list(settings.values()), 
+        index=list(settings.keys()), 
+        columns=["settings"]
+    )
+    
+    return result_anndata
 
 
 def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-                        use_tensorboard_id=None, writer=None):
+                        model_type, use_tensorboard_id=None, writer=None):
     """
     Create settings dictionary for saving.
     
@@ -480,6 +590,7 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
     - NB_probs: Negative binomial probability
     - use_chisq: Whether chi-squared loss was used
     - scale: Scale factor
+    - model_type: Type of model used
     - use_tensorboard_id: Tensorboard identifier
     - writer: Tensorboard writer
     
@@ -492,7 +603,8 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
         'device': str(device),
         'NB_probs': str(NB_probs),
         'use_chisq': str(use_chisq),
-        'scale': str(scale)
+        'scale': str(scale),
+        'model_type': str(model_type)
     }
     
     if use_tensorboard_id is not None and writer is not None:
@@ -503,8 +615,8 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
 
 
 def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, 
-                        use_chisq=False, use_tensorboard_id=None, spatial=False, 
-                        plot_dims=None, scale=None):
+                        use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, 
+                        plot_dims=None, scale=None, model_family='gamma'):
     """
     Run unsupervised NMF analysis.
     
@@ -519,42 +631,43 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     - spatial: Whether to include spatial analysis
     - plot_dims: Plotting dimensions [rows, cols]
     - scale: Scale factor (computed automatically if None)
+    - model_family: 'gamma' or 'exponential'
     
     Returns:
     - result_anndata: AnnData object with results
     """
-    # Validate data and setup
     coords = validate_data(data, spatial, plot_dims, num_patterns)
     D, U, scale, device = prepare_tensors(data, device)
-    print(D.shape)
-    print(U.shape)
+    print(f"D shape: {D.shape}, U shape: {U.shape}")
     
-    # Setup model and optimizer
+    model_type = f'{model_family}_unsupervised'
     model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, device
+        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, model_type=model_type
     )
     print(f'Plotting with spatial coordinates: {spatial}')
-    # Run inference
+    
     losses, steps, runtime, writer = run_inference_loop(
         svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
     )
     
-    # Create settings and save results
     settings = create_settings_dict(
         num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        use_tensorboard_id, writer
+        model_type, use_tensorboard_id, writer
     )
     
+    result_anndata = data.copy()
     result_anndata = save_results_to_anndata(
-        data, model, losses, steps, runtime, scale, settings, 'unsupervised'
+        result_anndata, model, losses, steps, runtime, scale, settings, num_learned_patterns=num_patterns
     )
+    
     pyro.clear_param_store()
     return result_anndata
 
 
 def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, device=None, 
-                      NB_probs=0.5, use_chisq=False, use_tensorboard_id=None, 
-                      spatial=False, plot_dims=None, scale=None):
+                      NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, 
+                      spatial=False, plot_dims=None, scale=None, model_family='gamma',
+                      supervision_type='fixed_genes'):
     """
     Run supervised NMF analysis with fixed patterns.
     
@@ -570,101 +683,37 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     - spatial: Whether to include spatial analysis
     - plot_dims: Plotting dimensions [rows, cols]
     - scale: Scale factor (computed automatically if None)
+    - model_family: 'gamma' or 'exponential'
+    - supervision_type: 'fixed_genes' or 'fixed_samples'
     
     Returns:
     - result_anndata: AnnData object with results
     """
-    # Validate data and setup
     coords = validate_data(data, spatial, plot_dims, num_patterns)
     D, U, scale, device = prepare_tensors(data, device)
     
-    # Prepare fixed patterns
     fixed_pattern_names = list(fixed_patterns.columns)
-    fixed_patterns_tensor = torch.tensor(fixed_patterns.to_numpy()).to(device)
+    fixed_patterns_tensor = torch.tensor(fixed_patterns.to_numpy(), dtype=torch.float32).to(device)
     
-    # Setup model and optimizer
+    model_type = f'{model_family}_supervised'
     model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, device, 
-        fixed_patterns_tensor, 'supervised'
+        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, 
+        fixed_patterns_tensor, model_type, supervision_type
     )
     
-    # Run inference
     losses, steps, runtime, writer = run_inference_loop(
         svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
     )
     
-    # Create settings and save results
     settings = create_settings_dict(
         num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        use_tensorboard_id, writer
+        model_type, use_tensorboard_id, writer
     )
     
+    result_anndata = data.copy()
     result_anndata = save_results_to_anndata(
-        data, model, losses, steps, runtime, scale, settings, 
-        'supervised', fixed_pattern_names
+        result_anndata, model, losses, steps, runtime, scale, settings, fixed_pattern_names=fixed_pattern_names, num_learned_patterns=num_patterns
     )
+    
     pyro.clear_param_store()
     return result_anndata
-
-
-# Convenience alias for backward compatibility
-def run_nmf_supervisedP(data, num_patterns, fixed_patterns, num_steps=20000, device=None, 
-                       NB_probs=0.5, use_chisq=False, use_tensorboard_id=None, 
-                       spatial=False, plot_dims=None, scale=None):
-    """Alias for run_nmf_supervised for backward compatibility."""
-    return run_nmf_supervised(
-        data, num_patterns, fixed_patterns, num_steps, device, 
-        NB_probs, use_chisq, use_tensorboard_id, spatial, plot_dims, scale
-    )
-
-
-
-def run_nmf_exponential(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, 
-                        use_chisq=False, use_tensorboard_id=None, spatial=False, 
-                        plot_dims=None, scale=None):
-    """
-    Run unsupervised NMF analysis.
-    
-    Parameters:
-    - data: AnnData object with raw counts in X
-    - num_patterns: Number of patterns to extract
-    - num_steps: Number of optimization steps
-    - device: Device to run on ('cpu', 'cuda', 'mps', or None for auto)
-    - NB_probs: Negative binomial probability
-    - use_chisq: Whether to use chi-squared loss
-    - use_tensorboard_id: Tensorboard logging identifier
-    - spatial: Whether to include spatial analysis
-    - plot_dims: Plotting dimensions [rows, cols]
-    - scale: Scale factor (computed automatically if None)
-    
-    Returns:
-    - result_anndata: AnnData object with results
-    """
-    print("Running exponential NMF")
-    # Validate data and setup
-    coords = validate_data(data, spatial, plot_dims, num_patterns)
-    D, U, scale, device = prepare_tensors(data, device)
-    print(D.shape)
-    print(U.shape)
-    # Setup model and optimizer
-    model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, device, model_type ='exponential'
-    )
-    print(f'Plotting with spatial coordinates: {spatial}')
-    # Run inference
-    losses, steps, runtime, writer = run_inference_loop(
-        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
-    )
-    
-    # Create settings and save results
-    settings = create_settings_dict(
-        num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        use_tensorboard_id, writer
-    )
-    
-    result_anndata = save_results_to_anndata(
-        data, model, losses, steps, runtime, scale, settings, 'unsupervised'
-    )
-    pyro.clear_param_store()
-    return result_anndata
-
