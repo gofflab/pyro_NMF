@@ -99,7 +99,7 @@ def prepare_tensors(data, device=None):
 
 def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None,
                              fixed_patterns=None, model_type='gamma_unsupervised',
-                             supervision_type=None):
+                             supervision_type=None, batch_size=None):
     """
     Setup the NMF model and optimizer.
     
@@ -113,6 +113,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     - fixed_patterns: Fixed patterns for supervised learning
     - model_type: 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', 'exponential_supervised'
     - supervision_type: 'fixed_genes' or 'fixed_samples' (for supervised models)
+    - batch_size: Optional minibatch size for sample-wise subsampling
     
     Returns:
     - model: Initialized model
@@ -145,20 +146,20 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     elif model_type == 'exponential_unsupervised':
         model = Exponential_base(
             D.shape[0], D.shape[1], num_patterns, 
-            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
+            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device, batch_size=batch_size
         )
     elif model_type == 'exponential_supervised':
         if supervision_type == 'fixed_genes':
             model = Exponential_SSFixedGenes(
                 D.shape[0], D.shape[1], num_patterns, 
                 fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
-                NB_probs=NB_probs, device=device
+                NB_probs=NB_probs, device=device, batch_size=batch_size
             )
         elif supervision_type == 'fixed_samples':
             model = Exponential_SSFixedSamples(
                 D.shape[0], D.shape[1], num_patterns, 
                 fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
-                NB_probs=NB_probs, device=device
+                NB_probs=NB_probs, device=device, batch_size=batch_size
             )
         else:
             raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
@@ -506,7 +507,7 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
 
 
 def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-                        model_type, use_tensorboard_id=None, writer=None):
+                        model_type, use_tensorboard_id=None, writer=None, batch_size=None):
     """
     Create settings dictionary for saving.
     
@@ -520,6 +521,7 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
     - model_type: Type of model used
     - use_tensorboard_id: Tensorboard identifier
     - writer: Tensorboard writer
+    - batch_size: Optional minibatch size
     
     Returns:
     - settings: Dictionary of settings
@@ -533,6 +535,8 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
         'scale': str(scale),
         'model_type': str(model_type)
     }
+    if batch_size is not None:
+        settings['batch_size'] = str(batch_size)
     
     if use_tensorboard_id is not None and writer is not None:
         settings['tensorboard_identifier'] = str(writer.log_dir)
@@ -543,7 +547,7 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
 
 def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, 
                         use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, 
-                        plot_dims=None, scale=None, model_family='gamma'):
+                        plot_dims=None, scale=None, model_family='gamma', batch_size=None):
     """
     Run unsupervised NMF analysis.
     
@@ -559,6 +563,7 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     - plot_dims: Plotting dimensions [rows, cols]
     - scale: Scale factor (computed automatically if None)
     - model_family: 'gamma' or 'exponential'
+    - batch_size: Optional minibatch size for sample-wise subsampling
     
     Returns:
     - result_anndata: AnnData object with results
@@ -569,7 +574,7 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     
     model_type = f'{model_family}_unsupervised'
     model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, model_type=model_type
+        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, model_type=model_type, batch_size=batch_size
     )
     print(f'Plotting with spatial coordinates: {spatial}')
     
@@ -579,7 +584,7 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     
     settings = create_settings_dict(
         num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        model_type, use_tensorboard_id, writer
+        model_type, use_tensorboard_id, writer, batch_size
     )
     
     result_anndata = data.copy()
@@ -594,7 +599,7 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
 def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, device=None, 
                       NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, 
                       spatial=False, plot_dims=None, scale=None, model_family='gamma',
-                      supervision_type='fixed_genes'):
+                      supervision_type='fixed_genes', batch_size=None):
     """
     Run supervised NMF analysis with fixed patterns.
     
@@ -612,6 +617,7 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     - scale: Scale factor (computed automatically if None)
     - model_family: 'gamma' or 'exponential'
     - supervision_type: 'fixed_genes' or 'fixed_samples'
+    - batch_size: Optional minibatch size for sample-wise subsampling
     
     Returns:
     - result_anndata: AnnData object with results
@@ -625,7 +631,7 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     model_type = f'{model_family}_supervised'
     model, guide, svi = setup_model_and_optimizer(
         D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, 
-        fixed_patterns_tensor, model_type, supervision_type
+        fixed_patterns_tensor, model_type, supervision_type, batch_size
     )
     
     losses, steps, runtime, writer = run_inference_loop(
@@ -634,7 +640,7 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     
     settings = create_settings_dict(
         num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        model_type, use_tensorboard_id, writer
+        model_type, use_tensorboard_id, writer, batch_size
     )
     
     result_anndata = data.copy()
