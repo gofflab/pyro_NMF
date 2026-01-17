@@ -1,3 +1,4 @@
+"""Deprecated semi-supervised Gamma-NB model with sampling (kept for reference)."""
 #%%
 import pyro
 import pyro.distributions as dist
@@ -12,6 +13,7 @@ pyro.enable_validation(True)
 
 #%%
 class Gamma_NegBinomial_SSFixed(Gamma_NegBinomial_base):
+    """Deprecated Gamma-Negative Binomial model with fixed patterns."""
     def __init__(self,
                  num_genes,
                  num_samples,
@@ -21,7 +23,23 @@ class Gamma_NegBinomial_SSFixed(Gamma_NegBinomial_base):
                  device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]):
             ):
-        
+        """Initialize the deprecated semi-supervised model.
+
+        Parameters
+        ----------
+        num_genes : int
+            Number of genes/features (columns in ``D``).
+        num_samples : int
+            Number of samples (rows in ``D``).
+        num_patterns : int
+            Number of additional patterns to learn.
+        fixed_patterns : array-like
+            Fixed patterns with shape ``(num_samples, num_fixed_patterns)``.
+        NB_probs : float, optional
+            Negative Binomial probability parameter.
+        device : torch.device, optional
+            Device for parameters and tensors.
+        """
         super().__init__(num_genes, num_samples, num_patterns, NB_probs, device)
         self.fixed_patterns = fixed_patterns # of shape samples x fixed patterns
         self.num_fixed_patterns = fixed_patterns.shape[1]
@@ -40,6 +58,15 @@ class Gamma_NegBinomial_SSFixed(Gamma_NegBinomial_base):
         self.sumP = torch.zeros(self.num_samples, self.num_patterns, device=self.device)
 
     def forward(self, D, samp = False):
+        """Run a forward pass of the model.
+
+        Parameters
+        ----------
+        D : torch.Tensor
+            Observed count matrix with shape ``(num_samples, num_genes)``.
+        samp : bool, optional
+            If True, accumulate sampled A/P values into running sums.
+        """
         # Nested plates for pixel-wise independence
         with pyro.plate("patterns", self.num_fixed_patterns + self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
@@ -68,6 +95,23 @@ class Gamma_NegBinomial_SSFixed(Gamma_NegBinomial_base):
 
     
     def plot_grid_noAlpha(self, patterns, coords, nrows, ncols, s=4, savename = None):
+        """Plot spatial patterns without alpha scaling.
+
+        Parameters
+        ----------
+        patterns : array-like
+            Pattern matrix with shape ``(n_samples, n_patterns)``.
+        coords : Mapping or array-like
+            Spatial coordinates; expects ``coords['x']`` and ``coords['y']``.
+        nrows : int
+            Number of rows in the plot grid.
+        ncols : int
+            Number of columns in the plot grid.
+        s : float, optional
+            Marker size for scatter points.
+        savename : str or None, optional
+            If provided, save the figure to this path.
+        """
         fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
         num_patterns = patterns.shape[1]
         x, y = coords['x'], coords['y']
@@ -88,5 +132,5 @@ class Gamma_NegBinomial_SSFixed(Gamma_NegBinomial_base):
             plt.savefig(savename)
 
 def guide(D):
+    """Placeholder guide (not implemented)."""
     pass
-

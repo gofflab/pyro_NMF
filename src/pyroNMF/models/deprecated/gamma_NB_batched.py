@@ -1,3 +1,4 @@
+"""Deprecated batched Gamma-NB model (kept for reference)."""
 #%%
 import pyro
 import pyro.distributions as dist
@@ -17,6 +18,7 @@ pyro.enable_validation(True)
 ########################################################
 
 class Gamma_NegBinomial_batched(Gamma_NegBinomial_base):
+    """Deprecated batched Gamma-Negative Binomial model."""
     def __init__(self,
                  num_genes,
                  num_samples,
@@ -25,11 +27,32 @@ class Gamma_NegBinomial_batched(Gamma_NegBinomial_base):
                  device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
-        
+        """Initialize the deprecated batched model.
+
+        Parameters
+        ----------
+        num_genes : int
+            Number of genes/features (columns in ``D``).
+        num_samples : int
+            Number of samples (rows in ``D``).
+        num_patterns : int
+            Number of latent patterns to learn.
+        NB_probs : float, optional
+            Negative Binomial probability parameter.
+        device : torch.device, optional
+            Device for parameters and tensors.
+        """
         super().__init__(num_genes, num_samples, num_patterns, NB_probs, device)
 
 
     def forward(self, D):
+        """Run a forward pass of the model.
+
+        Parameters
+        ----------
+        D : torch.Tensor
+            Observed count matrix with shape ``(num_samples, num_genes)``.
+        """
         # Nested plates for pixel-wise independence
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
@@ -47,6 +70,7 @@ class Gamma_NegBinomial_batched(Gamma_NegBinomial_base):
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) ## Changed distribution to NegativeBinomial
 
 def guide(D):
+    """Placeholder guide (not implemented)."""
     pass
 
 

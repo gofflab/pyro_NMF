@@ -1,3 +1,4 @@
+"""Exponential-prior NMF models with Negative Binomial likelihoods."""
 #%%
 # Consolidate all the gamma NB models
 import pyro
@@ -15,6 +16,30 @@ default_dtype = torch.float32
 
 #%%
 class Exponential_base(PyroModule):
+    """Exponential-prior NMF model with Negative Binomial likelihood.
+
+    Factorizes the observed count matrix ``D`` (samples x genes) into
+    ``P @ A`` with Exponential priors on both factors. Optionally adds
+    chi-squared and/or Poisson terms to the loss, and tracks the best
+    parameters by chi-squared during training.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of samples (rows in ``D``).
+    num_genes : int
+        Number of genes/features (columns in ``D``).
+    num_patterns : int
+        Number of latent patterns to learn.
+    use_chisq : bool, optional
+        If True, adds a chi-squared loss term via ``pyro.factor``.
+    use_pois : bool, optional
+        If True, adds a Poisson log-likelihood term via ``pyro.factor``.
+    NB_probs : float, optional
+        Probability parameter for the Negative Binomial likelihood.
+    device : torch.device, optional
+        Device for parameters and intermediate tensors.
+    """
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -27,6 +52,7 @@ class Exponential_base(PyroModule):
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
     
+        """Initialize the model and tracking buffers."""
         super().__init__()
 
         ## Initialize parameters
@@ -76,6 +102,16 @@ class Exponential_base(PyroModule):
 
 
     def forward(self, D, U):
+        """Run one stochastic forward pass of the model.
+
+        Parameters
+        ----------
+        D : torch.Tensor
+            Observed count matrix with shape ``(num_samples, num_genes)``.
+        U : torch.Tensor
+            Per-entry scale/uncertainty for chi-squared computation, same
+            shape as ``D``.
+        """
         self.iter += 1 # keep a running total of iterations
 
         # Nested plates for pixel-wise independence
@@ -133,10 +169,36 @@ class Exponential_base(PyroModule):
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
     def guide(D):
+        """Placeholder guide (use AutoNormal externally)."""
         pass
 
 
 class Exponential_SSFixedGenes(Exponential_base):
+    """Semi-supervised Exponential model with fixed gene patterns.
+
+    Extends ``Exponential_base`` by fixing a set of patterns over genes and
+    learning additional patterns. The fixed patterns are concatenated to the
+    learned ``A`` matrix during reconstruction.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of samples (rows in ``D``).
+    num_genes : int
+        Number of genes/features (columns in ``D``).
+    num_patterns : int
+        Number of additional patterns to learn.
+    fixed_patterns : array-like
+        Fixed patterns with shape ``(num_genes, num_fixed_patterns)``.
+    use_chisq : bool, optional
+        If True, adds a chi-squared loss term.
+    use_pois : bool, optional
+        If True, adds a Poisson log-likelihood term.
+    NB_probs : float, optional
+        Probability parameter for the Negative Binomial likelihood.
+    device : torch.device, optional
+        Device for parameters and tensors.
+    """
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -150,6 +212,7 @@ class Exponential_SSFixedGenes(Exponential_base):
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
+        """Initialize the semi-supervised model with fixed gene patterns."""
         super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
@@ -171,6 +234,15 @@ class Exponential_SSFixedGenes(Exponential_base):
         self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
 
     def forward(self, D, U):
+        """Run one stochastic forward pass with fixed gene patterns.
+
+        Parameters
+        ----------
+        D : torch.Tensor
+            Observed count matrix with shape ``(num_samples, num_genes)``.
+        U : torch.Tensor
+            Per-entry scale/uncertainty for chi-squared computation.
+        """
 
         self.iter += 1 # keep a running total of iterations
 
@@ -232,12 +304,38 @@ class Exponential_SSFixedGenes(Exponential_base):
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
     def guide(D):
+        """Placeholder guide (use AutoNormal externally)."""
         pass
 
 
 
 
 class Exponential_SSFixedSamples(Exponential_base):
+    """Semi-supervised Exponential model with fixed sample patterns.
+
+    Extends ``Exponential_base`` by fixing a set of patterns over samples and
+    learning additional patterns. The fixed patterns are concatenated to the
+    learned ``P`` matrix during reconstruction.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of samples (rows in ``D``).
+    num_genes : int
+        Number of genes/features (columns in ``D``).
+    num_patterns : int
+        Number of additional patterns to learn.
+    fixed_patterns : array-like
+        Fixed patterns with shape ``(num_samples, num_fixed_patterns)``.
+    use_chisq : bool, optional
+        If True, adds a chi-squared loss term.
+    use_pois : bool, optional
+        If True, adds a Poisson log-likelihood term.
+    NB_probs : float, optional
+        Probability parameter for the Negative Binomial likelihood.
+    device : torch.device, optional
+        Device for parameters and tensors.
+    """
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -251,6 +349,7 @@ class Exponential_SSFixedSamples(Exponential_base):
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
+        """Initialize the semi-supervised model with fixed sample patterns."""
         super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed P and A extended by this amount ##
@@ -274,6 +373,15 @@ class Exponential_SSFixedSamples(Exponential_base):
         self.fixed_P = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
 
     def forward(self, D, U):
+        """Run one stochastic forward pass with fixed sample patterns.
+
+        Parameters
+        ----------
+        D : torch.Tensor
+            Observed count matrix with shape ``(num_samples, num_genes)``.
+        U : torch.Tensor
+            Per-entry scale/uncertainty for chi-squared computation.
+        """
 
         self.iter += 1 # keep a running total of iterations
 
@@ -336,5 +444,5 @@ class Exponential_SSFixedSamples(Exponential_base):
 
 
 def guide(D):
+    """Placeholder guide (use AutoNormal externally)."""
     pass
-

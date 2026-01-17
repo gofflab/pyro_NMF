@@ -1,3 +1,5 @@
+"""Legacy run wrappers retained for backward compatibility."""
+
 import torch
 from pyroNMF.models.gamma_NB_newBase import Gamma_NegBinomial_base
 from pyroNMF.models.gamma_NB_new_SSfixedP import Gamma_NegBinomial_SSFixed
@@ -43,6 +45,36 @@ from pyro.infer.autoguide import AutoNormal
 
 
 def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, use_chisq=False, use_tensorboard_id=None, spatial=False, plot_dims=None, scale=None):
+    """Legacy unsupervised NMF wrapper (deprecated).
+
+    Parameters
+    ----------
+    data : anndata.AnnData
+        AnnData object with raw counts in ``.X``.
+    num_patterns : int
+        Number of patterns to learn.
+    num_steps : int, optional
+        Number of optimization steps.
+    device : str or torch.device or None, optional
+        Device to run on; if None, auto-detect.
+    NB_probs : float, optional
+        Negative Binomial probability parameter.
+    use_chisq : bool, optional
+        If True, include chi-squared loss term.
+    use_tensorboard_id : str or None, optional
+        TensorBoard logging identifier.
+    spatial : bool, optional
+        If True, use spatial coordinates in ``obsm['spatial']`` for plots.
+    plot_dims : sequence of int or None, optional
+        Grid dimensions ``[rows, cols]`` for spatial plots.
+    scale : float or None, optional
+        Scale factor (computed from data regardless of this value).
+
+    Returns
+    -------
+    anndata.AnnData
+        AnnData object populated with legacy outputs.
+    """
     D = torch.tensor(data.X)
     U = (D * 0.1).clip(min=0.3)  # in range [0,1]; if None: use default of 1 - sparsity; this is the probs argument for NegativeBinomial for D
     scale = (D.numpy().std())*2
@@ -243,6 +275,38 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
 
 
 def run_nmf_supervisedP(data, num_patterns, fixed_patterns, num_steps=20000, device=None, NB_probs=0.5, use_chisq=False, use_tensorboard_id=None, spatial=False, plot_dims=None, scale=None):
+    """Legacy supervised NMF wrapper with fixed patterns (deprecated).
+
+    Parameters
+    ----------
+    data : anndata.AnnData
+        AnnData object with raw counts in ``.X``.
+    num_patterns : int
+        Number of additional patterns to learn.
+    fixed_patterns : pandas.DataFrame
+        Fixed pattern matrix (samples x fixed patterns).
+    num_steps : int, optional
+        Number of optimization steps.
+    device : str or torch.device or None, optional
+        Device to run on; if None, auto-detect.
+    NB_probs : float, optional
+        Negative Binomial probability parameter.
+    use_chisq : bool, optional
+        If True, include chi-squared loss term.
+    use_tensorboard_id : str or None, optional
+        TensorBoard logging identifier.
+    spatial : bool, optional
+        If True, use spatial coordinates in ``obsm['spatial']`` for plots.
+    plot_dims : sequence of int or None, optional
+        Grid dimensions ``[rows, cols]`` for spatial plots.
+    scale : float or None, optional
+        Scale factor (computed from data regardless of this value).
+
+    Returns
+    -------
+    anndata.AnnData
+        AnnData object populated with legacy outputs.
+    """
     D = torch.tensor(data.X)
     U = (D * 0.1).clip(min=0.3)  # in range [0,1]; if None: use default of 1 - sparsity; this is the probs argument for NegativeBinomial for D
     scale = (D.numpy().std())*2

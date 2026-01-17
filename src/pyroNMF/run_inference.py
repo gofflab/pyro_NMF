@@ -1,3 +1,5 @@
+"""High-level inference wrappers for pyroNMF models."""
+
 import torch
 
 from pyroNMF.models.gamma_NB_models import (
@@ -28,20 +30,28 @@ from pyro.infer.autoguide import AutoNormal
 default_dtype = torch.float32
 
 def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
-    """
-    Validate input data and spatial coordinates.
-    
-    Parameters:
-    - data: AnnData object containing the data
-    - spatial: Whether spatial analysis is requested
-    - plot_dims: Plotting dimensions [rows, cols]
-    - num_patterns: Number of patterns for validation
-    
-    Returns:
-    - coords: Spatial coordinates if spatial=True, else None
-    
-    Raises:
-    - ValueError: If validation fails
+    """Validate AnnData inputs and optional spatial coordinates.
+
+    Parameters
+    ----------
+    data : anndata.AnnData
+        AnnData object containing raw counts in ``.X``.
+    spatial : bool, optional
+        If True, validate that ``data.obsm['spatial']`` exists and is 2D.
+    plot_dims : sequence of int or None, optional
+        Plotting grid dimensions ``[rows, cols]`` for spatial plots.
+    num_patterns : int or None, optional
+        Number of patterns to compare against ``plot_dims``.
+
+    Returns
+    -------
+    numpy.ndarray or None
+        Spatial coordinates if ``spatial=True``, otherwise None.
+
+    Raises
+    ------
+    ValueError
+        If spatial coordinates are missing or malformed.
     """
     print("Running validate_data")
     D = torch.tensor(data.X) if not hasattr(data.X, 'toarray') else torch.tensor(data.X.toarray())
@@ -67,18 +77,24 @@ def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
 
 
 def prepare_tensors(data, device=None):
-    """
-    Prepare and move tensors to the specified device.
-    
-    Parameters:
-    - data: AnnData object containing the data
-    - device: Target device ('cpu', 'cuda', 'mps', or None for auto-detection)
-    
-    Returns:
-    - D: Data tensor
-    - U: Probability tensor
-    - scale: Scale factor
-    - device: Selected device
+    """Prepare tensors for inference and move them to a device.
+
+    Parameters
+    ----------
+    data : anndata.AnnData
+        AnnData object with raw counts in ``.X`` (dense or sparse).
+    device : str or torch.device or None, optional
+        Target device (``'cpu'``, ``'cuda'``, ``'mps'``). If None, autodetect.
+
+    Returns
+    -------
+    tuple
+        ``(D, U, scale, device)`` where:
+
+        - ``D`` is the data tensor with shape ``(n_samples, n_genes)``.
+        - ``U`` is a per-entry scale tensor used in chi-squared computation.
+        - ``scale`` is a scalar derived from the data standard deviation.
+        - ``device`` is the selected torch device.
     """
     if device is None:
         device = detect_device()
@@ -100,24 +116,37 @@ def prepare_tensors(data, device=None):
 def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None,
                              fixed_patterns=None, model_type='gamma_unsupervised',
                              supervision_type=None):
-    """
-    Setup the NMF model and optimizer.
-    
-    Parameters:
-    - D: Data tensor
-    - num_patterns: Number of patterns
-    - scale: Scale factor
-    - NB_probs: Negative binomial probability
-    - use_chisq: Whether to use chi-squared loss
-    - device: Device to run on
-    - fixed_patterns: Fixed patterns for supervised learning
-    - model_type: 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', 'exponential_supervised'
-    - supervision_type: 'fixed_genes' or 'fixed_samples' (for supervised models)
-    
-    Returns:
-    - model: Initialized model
-    - guide: AutoNormal guide
-    - svi: SVI optimizer
+    """Construct the model, guide, and SVI optimizer.
+
+    Parameters
+    ----------
+    D : torch.Tensor
+        Data tensor with shape ``(n_samples, n_genes)``.
+    num_patterns : int
+        Number of patterns to learn.
+    scale : float, optional
+        Scale parameter used for Gamma-based models.
+    NB_probs : float, optional
+        Probability parameter for the Negative Binomial likelihood.
+    use_chisq : bool, optional
+        If True, include chi-squared loss via ``pyro.factor``.
+    use_pois : bool, optional
+        If True, include Poisson log-likelihood via ``pyro.factor``.
+    device : torch.device or None, optional
+        Device for parameters and tensors.
+    fixed_patterns : torch.Tensor or None, optional
+        Fixed pattern matrix for semi-supervised models.
+    model_type : str, optional
+        One of ``'gamma_unsupervised'``, ``'gamma_supervised'``,
+        ``'exponential_unsupervised'``, or ``'exponential_supervised'``.
+    supervision_type : str or None, optional
+        ``'fixed_genes'`` or ``'fixed_samples'`` for supervised models.
+
+    Returns
+    -------
+    tuple
+        ``(model, guide, svi)`` where ``guide`` is an ``AutoNormal`` guide
+        and ``svi`` is a ``pyro.infer.SVI`` instance.
     """
     # Instantiate the model
     if model_type == 'gamma_unsupervised':
@@ -177,25 +206,34 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
 
 def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None, 
                       spatial=False, coords=None, plot_dims=None):
-    """
-    Run the inference loop with optional tensorboard logging.
-    
-    Parameters:
-    - svi: SVI optimizer
-    - model: The model
-    - D: Data tensor
-    - U: Probability tensor
-    - num_steps: Number of optimization steps
-    - use_tensorboard_id: Tensorboard identifier
-    - spatial: Whether to include spatial plots
-    - coords: Spatial coordinates
-    - plot_dims: Plotting dimensions
-    
-    Returns:
-    - losses: List of loss values
-    - steps: List of step numbers
-    - runtime: Runtime in seconds
-    - writer: Tensorboard writer (if used)
+    """Run the SVI optimization loop with optional TensorBoard logging.
+
+    Parameters
+    ----------
+    svi : pyro.infer.SVI
+        Configured SVI object.
+    model : pyro.nn.PyroModule
+        Model instance being optimized.
+    D : torch.Tensor
+        Data tensor with shape ``(n_samples, n_genes)``.
+    U : torch.Tensor
+        Per-entry scale/uncertainty tensor used in chi-squared computation.
+    num_steps : int
+        Number of optimization steps.
+    use_tensorboard_id : str or None, optional
+        If provided, enable TensorBoard logging with this identifier.
+    spatial : bool, optional
+        If True, attempt to log spatial pattern plots.
+    coords : array-like or None, optional
+        Spatial coordinates for plotting.
+    plot_dims : sequence of int or None, optional
+        Grid dimensions ``[rows, cols]`` for spatial plots.
+
+    Returns
+    -------
+    tuple
+        ``(losses, steps, runtime, writer)`` where ``writer`` is a
+        ``SummaryWriter`` or None.
     """
     start_time = datetime.now()
     steps = []
@@ -231,17 +269,24 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
 
 
 def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None):
-    """
-    Log metrics to tensorboard.
-    
-    Parameters:
-    - writer: Tensorboard writer
-    - model: The model
-    - step: Current step
-    - loss: Current loss
-    - spatial: Whether to include spatial plots
-    - coords: Spatial coordinates
-    - plot_dims: Plotting dimensions
+    """Log scalar metrics and optional plots to TensorBoard.
+
+    Parameters
+    ----------
+    writer : torch.utils.tensorboard.SummaryWriter
+        TensorBoard summary writer.
+    model : pyro.nn.PyroModule
+        Model instance.
+    step : int
+        Current optimization step.
+    loss : float
+        Current loss value.
+    spatial : bool, optional
+        If True, log spatial plots when possible.
+    coords : array-like or None, optional
+        Spatial coordinates for plotting.
+    plot_dims : sequence of int or None, optional
+        Grid dimensions ``[rows, cols]`` for spatial plots.
     """
     writer.add_scalar("Loss/train", loss, step)
     if hasattr(model, "best_chisq"):
@@ -300,16 +345,18 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
 
 def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
-    """
-    Auto-detect and save all model parameters from model and param store.
-    
-    Parameters:
-    - result_anndata: AnnData object to save to
-    - model: The trained model
-    - fixed_pattern_names: Names of fixed patterns (for supervised)
-    - num_learned_patterns: Number of learned patterns (for supervised)
-    - supervised: 'fixed_genes' or 'fixed_samples' or None
+    """Auto-detect and persist model parameters into AnnData slots.
 
+    Parameters
+    ----------
+    result_anndata : anndata.AnnData
+        AnnData object to populate with results.
+    model : pyro.nn.PyroModule
+        Trained model instance.
+    fixed_pattern_names : sequence of str or None, optional
+        Names for fixed patterns (semi-supervised models).
+    num_learned_patterns : int or None, optional
+        Number of learned patterns used to construct column names.
     """
     store = pyro.get_param_store()
     learned_pattern_names = ["Pattern_" + str(x + 1) for x in range(num_learned_patterns)]
@@ -468,22 +515,39 @@ def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None,
 
 def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, 
                            fixed_pattern_names=None, num_learned_patterns=None, supervised=None):
-    """
-    Save results to AnnData object with auto-detection of parameters.
-    
-    Parameters:
-    - result_anndata: AnnData object to save to
-    - model: Trained model
-    - losses: Training losses
-    - steps: Training steps
-    - runtime: Training runtime
-    - scale: Scale factor used
-    - settings: Training settings
-    - fixed_pattern_names: Names of fixed patterns (for supervised)
-    - num_learned_patterns: Number of learned patterns (for supervised)
-    
-    Returns:
-    - result_anndata: AnnData object with results
+    """Save inference outputs into AnnData ``obsm``, ``varm``, and ``uns``.
+
+    Parameters
+    ----------
+    result_anndata : anndata.AnnData
+        AnnData object to populate with results (typically a copy of input).
+    model : pyro.nn.PyroModule
+        Trained model instance.
+    losses : list[float]
+        Loss values recorded during training.
+    steps : list[int]
+        Optimization steps corresponding to ``losses``.
+    runtime : int
+        Runtime in seconds.
+    scale : torch.Tensor or float
+        Scale factor used for Gamma-based models.
+    settings : dict
+        Training settings metadata.
+    fixed_pattern_names : sequence of str or None, optional
+        Names for fixed patterns in semi-supervised runs.
+    num_learned_patterns : int or None, optional
+        Number of learned patterns used to generate column names.
+    supervised : str or None, optional
+        Included for compatibility; saved results are auto-detected.
+
+    Returns
+    -------
+    anndata.AnnData
+        The AnnData object with results stored under:
+
+        - ``obsm``: ``loc_P``, ``last_P``, ``best_P``, and variants.
+        - ``varm``: ``loc_A``, ``last_A``, ``best_A``, and variants.
+        - ``uns``: training metadata, losses, settings, and scales.
     """
     # Save P parameters
     _detect_and_save_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
@@ -507,22 +571,33 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
 
 def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
                         model_type, use_tensorboard_id=None, writer=None):
-    """
-    Create settings dictionary for saving.
-    
-    Parameters:
-    - num_patterns: Number of patterns
-    - num_steps: Number of training steps
-    - device: Device used
-    - NB_probs: Negative binomial probability
-    - use_chisq: Whether chi-squared loss was used
-    - scale: Scale factor
-    - model_type: Type of model used
-    - use_tensorboard_id: Tensorboard identifier
-    - writer: Tensorboard writer
-    
-    Returns:
-    - settings: Dictionary of settings
+    """Assemble a settings dictionary for persistence in ``AnnData.uns``.
+
+    Parameters
+    ----------
+    num_patterns : int
+        Number of patterns learned.
+    num_steps : int
+        Number of training steps.
+    device : torch.device
+        Device used for training.
+    NB_probs : float
+        Negative Binomial probability parameter.
+    use_chisq : bool
+        Whether chi-squared loss was used.
+    scale : float
+        Scale factor used by Gamma-based models.
+    model_type : str
+        Model type string (e.g., ``gamma_unsupervised``).
+    use_tensorboard_id : str or None, optional
+        TensorBoard identifier string.
+    writer : SummaryWriter or None, optional
+        TensorBoard writer (used to record log dir).
+
+    Returns
+    -------
+    dict
+        Settings dictionary suitable for ``AnnData.uns``.
     """
     settings = {
         'num_patterns': str(num_patterns),
@@ -544,24 +619,41 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
 def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, 
                         use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, 
                         plot_dims=None, scale=None, model_family='gamma'):
-    """
-    Run unsupervised NMF analysis.
-    
-    Parameters:
-    - data: AnnData object with raw counts in X
-    - num_patterns: Number of patterns to extract
-    - num_steps: Number of optimization steps
-    - device: Device to run on ('cpu', 'cuda', 'mps', or None for auto)
-    - NB_probs: Negative binomial probability
-    - use_chisq: Whether to use chi-squared loss
-    - use_tensorboard_id: Tensorboard logging identifier
-    - spatial: Whether to include spatial analysis
-    - plot_dims: Plotting dimensions [rows, cols]
-    - scale: Scale factor (computed automatically if None)
-    - model_family: 'gamma' or 'exponential'
-    
-    Returns:
-    - result_anndata: AnnData object with results
+    """Run unsupervised NMF analysis on an AnnData object.
+
+    Parameters
+    ----------
+    data : anndata.AnnData
+        AnnData object with raw counts in ``.X``.
+    num_patterns : int
+        Number of latent patterns to learn.
+    num_steps : int, optional
+        Number of optimization steps.
+    device : str or torch.device or None, optional
+        Target device (``'cpu'``, ``'cuda'``, ``'mps'``). If None, autodetect.
+    NB_probs : float, optional
+        Negative Binomial probability parameter.
+    use_chisq : bool, optional
+        If True, include chi-squared loss term.
+    use_pois : bool, optional
+        If True, include Poisson log-likelihood term.
+    use_tensorboard_id : str or None, optional
+        TensorBoard logging identifier. If None, logging is disabled.
+    spatial : bool, optional
+        If True, use ``obsm['spatial']`` for plotting and logging.
+    plot_dims : sequence of int or None, optional
+        Grid dimensions ``[rows, cols]`` for spatial plots.
+    scale : float or None, optional
+        Scale factor for Gamma models. Currently computed from data
+        regardless of this value.
+    model_family : {'gamma', 'exponential'}, optional
+        Model family to use.
+
+    Returns
+    -------
+    anndata.AnnData
+        Copy of the input AnnData with results saved into ``obsm``,
+        ``varm``, and ``uns``.
     """
     coords = validate_data(data, spatial, plot_dims, num_patterns)
     D, U, scale, device = prepare_tensors(data, device)
@@ -595,26 +687,48 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
                       NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, 
                       spatial=False, plot_dims=None, scale=None, model_family='gamma',
                       supervision_type='fixed_genes'):
-    """
-    Run supervised NMF analysis with fixed patterns.
-    
-    Parameters:
-    - data: AnnData object with raw counts in X
-    - num_patterns: Number of additional patterns to learn
-    - fixed_patterns: DataFrame with fixed patterns
-    - num_steps: Number of optimization steps
-    - device: Device to run on ('cpu', 'cuda', 'mps', or None for auto)
-    - NB_probs: Negative binomial probability
-    - use_chisq: Whether to use chi-squared loss
-    - use_tensorboard_id: Tensorboard logging identifier
-    - spatial: Whether to include spatial analysis
-    - plot_dims: Plotting dimensions [rows, cols]
-    - scale: Scale factor (computed automatically if None)
-    - model_family: 'gamma' or 'exponential'
-    - supervision_type: 'fixed_genes' or 'fixed_samples'
-    
-    Returns:
-    - result_anndata: AnnData object with results
+    """Run semi-supervised NMF analysis with fixed patterns.
+
+    Parameters
+    ----------
+    data : anndata.AnnData
+        AnnData object with raw counts in ``.X``.
+    num_patterns : int
+        Number of additional patterns to learn.
+    fixed_patterns : pandas.DataFrame
+        Fixed patterns. Shape depends on ``supervision_type``:
+
+        - ``fixed_genes``: ``(n_genes, n_fixed_patterns)``
+        - ``fixed_samples``: ``(n_samples, n_fixed_patterns)``
+    num_steps : int, optional
+        Number of optimization steps.
+    device : str or torch.device or None, optional
+        Target device (``'cpu'``, ``'cuda'``, ``'mps'``). If None, autodetect.
+    NB_probs : float, optional
+        Negative Binomial probability parameter.
+    use_chisq : bool, optional
+        If True, include chi-squared loss term.
+    use_pois : bool, optional
+        If True, include Poisson log-likelihood term.
+    use_tensorboard_id : str or None, optional
+        TensorBoard logging identifier. If None, logging is disabled.
+    spatial : bool, optional
+        If True, use ``obsm['spatial']`` for plotting and logging.
+    plot_dims : sequence of int or None, optional
+        Grid dimensions ``[rows, cols]`` for spatial plots.
+    scale : float or None, optional
+        Scale factor for Gamma models. Currently computed from data
+        regardless of this value.
+    model_family : {'gamma', 'exponential'}, optional
+        Model family to use.
+    supervision_type : {'fixed_genes', 'fixed_samples'}, optional
+        Whether fixed patterns are provided across genes or samples.
+
+    Returns
+    -------
+    anndata.AnnData
+        Copy of the input AnnData with results saved into ``obsm``,
+        ``varm``, and ``uns``.
     """
     coords = validate_data(data, spatial, plot_dims, num_patterns)
     D, U, scale, device = prepare_tensors(data, device)
