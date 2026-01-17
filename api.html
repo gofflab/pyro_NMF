@@ -1,0 +1,657 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API Reference &mdash; pyroNMF 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="AnnData Integration" href="anndata.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            pyroNMF
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial.html">Tutorial (Worked Example)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="anndata.html">AnnData Integration</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#high-level-wrappers">High-level wrappers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#utilities">Utilities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#model-families">Model families</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">pyroNMF</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">API Reference</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/api.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="api-reference">
+<h1>API Reference<a class="headerlink" href="#api-reference" title="Link to this heading"></a></h1>
+<section id="high-level-wrappers">
+<h2>High-level wrappers<a class="headerlink" href="#high-level-wrappers" title="Link to this heading"></a></h2>
+<p>.. py:module:: pyroNMF.run_inference</p>
+<p>High-level inference wrappers for pyroNMF models.</p>
+<p>.. py:function:: validate_data(data, spatial=False, plot_dims=None, num_patterns=None)
+:module: pyroNMF.run_inference</p>
+<p>Validate AnnData inputs and optional spatial coordinates.</p>
+<p>:param data: AnnData object containing raw counts in <code class="docutils literal notranslate"><span class="pre">.X</span></code>.
+:type data: anndata.AnnData
+:param spatial: If True, validate that <code class="docutils literal notranslate"><span class="pre">data.obsm['spatial']</span></code> exists and is 2D.
+:type spatial: bool, optional
+:param plot_dims: Plotting grid dimensions <code class="docutils literal notranslate"><span class="pre">[rows,</span> <span class="pre">cols]</span></code> for spatial plots.
+:type plot_dims: sequence of int or None, optional
+:param num_patterns: Number of patterns to compare against <code class="docutils literal notranslate"><span class="pre">plot_dims</span></code>.
+:type num_patterns: int or None, optional</p>
+<p>:returns: Spatial coordinates if <code class="docutils literal notranslate"><span class="pre">spatial=True</span></code>, otherwise None.
+:rtype: numpy.ndarray or None</p>
+<p>:raises ValueError: If spatial coordinates are missing or malformed.</p>
+<p>.. py:function:: prepare_tensors(data, device=None)
+:module: pyroNMF.run_inference</p>
+<p>Prepare tensors for inference and move them to a device.</p>
+<p>:param data: AnnData object with raw counts in <code class="docutils literal notranslate"><span class="pre">.X</span></code> (dense or sparse).
+:type data: anndata.AnnData
+:param device: Target device (<code class="docutils literal notranslate"><span class="pre">'cpu'</span></code>, <code class="docutils literal notranslate"><span class="pre">'cuda'</span></code>, <code class="docutils literal notranslate"><span class="pre">'mps'</span></code>). If None, autodetect.
+:type device: str or torch.device or None, optional</p>
+<p>:returns: <code class="docutils literal notranslate"><span class="pre">(D,</span> <span class="pre">U,</span> <span class="pre">scale,</span> <span class="pre">device)</span></code> where:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>         - ``D`` is the data tensor with shape ``(n_samples, n_genes)``.
+         - ``U`` is a per-entry scale tensor used in chi-squared computation.
+         - ``scale`` is a scalar derived from the data standard deviation.
+         - ``device`` is the selected torch device.
+</pre></div>
+</div>
+<p>:rtype: tuple</p>
+<p>.. py:function:: setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None, fixed_patterns=None, model_type=’gamma_unsupervised’, supervision_type=None)
+:module: pyroNMF.run_inference</p>
+<p>Construct the model, guide, and SVI optimizer.</p>
+<p>:param D: Data tensor with shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">n_genes)</span></code>.
+:type D: torch.Tensor
+:param num_patterns: Number of patterns to learn.
+:type num_patterns: int
+:param scale: Scale parameter used for Gamma-based models.
+:type scale: float, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param use_chisq: If True, include chi-squared loss via <code class="docutils literal notranslate"><span class="pre">pyro.factor</span></code>.
+:type use_chisq: bool, optional
+:param use_pois: If True, include Poisson log-likelihood via <code class="docutils literal notranslate"><span class="pre">pyro.factor</span></code>.
+:type use_pois: bool, optional
+:param device: Device for parameters and tensors.
+:type device: torch.device or None, optional
+:param fixed_patterns: Fixed pattern matrix for semi-supervised models.
+:type fixed_patterns: torch.Tensor or None, optional
+:param model_type: One of <code class="docutils literal notranslate"><span class="pre">'gamma_unsupervised'</span></code>, <code class="docutils literal notranslate"><span class="pre">'gamma_supervised'</span></code>,
+<code class="docutils literal notranslate"><span class="pre">'exponential_unsupervised'</span></code>, or <code class="docutils literal notranslate"><span class="pre">'exponential_supervised'</span></code>.
+:type model_type: str, optional
+:param supervision_type: <code class="docutils literal notranslate"><span class="pre">'fixed_genes'</span></code> or <code class="docutils literal notranslate"><span class="pre">'fixed_samples'</span></code> for supervised models.
+:type supervision_type: str or None, optional</p>
+<p>:returns: <code class="docutils literal notranslate"><span class="pre">(model,</span> <span class="pre">guide,</span> <span class="pre">svi)</span></code> where <code class="docutils literal notranslate"><span class="pre">guide</span></code> is an <code class="docutils literal notranslate"><span class="pre">AutoNormal</span></code> guide
+and <code class="docutils literal notranslate"><span class="pre">svi</span></code> is a <code class="docutils literal notranslate"><span class="pre">pyro.infer.SVI</span></code> instance.
+:rtype: tuple</p>
+<p>.. py:function:: run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None, spatial=False, coords=None, plot_dims=None)
+:module: pyroNMF.run_inference</p>
+<p>Run the SVI optimization loop with optional TensorBoard logging.</p>
+<p>:param svi: Configured SVI object.
+:type svi: pyro.infer.SVI
+:param model: Model instance being optimized.
+:type model: pyro.nn.PyroModule
+:param D: Data tensor with shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">n_genes)</span></code>.
+:type D: torch.Tensor
+:param U: Per-entry scale/uncertainty tensor used in chi-squared computation.
+:type U: torch.Tensor
+:param num_steps: Number of optimization steps.
+:type num_steps: int
+:param use_tensorboard_id: If provided, enable TensorBoard logging with this identifier.
+:type use_tensorboard_id: str or None, optional
+:param spatial: If True, attempt to log spatial pattern plots.
+:type spatial: bool, optional
+:param coords: Spatial coordinates for plotting.
+:type coords: array-like or None, optional
+:param plot_dims: Grid dimensions <code class="docutils literal notranslate"><span class="pre">[rows,</span> <span class="pre">cols]</span></code> for spatial plots.
+:type plot_dims: sequence of int or None, optional</p>
+<p>:returns: <code class="docutils literal notranslate"><span class="pre">(losses,</span> <span class="pre">steps,</span> <span class="pre">runtime,</span> <span class="pre">writer)</span></code> where <code class="docutils literal notranslate"><span class="pre">writer</span></code> is a
+<code class="docutils literal notranslate"><span class="pre">SummaryWriter</span></code> or None.
+:rtype: tuple</p>
+<p>.. py:function:: _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None)
+:module: pyroNMF.run_inference</p>
+<p>Log scalar metrics and optional plots to TensorBoard.</p>
+<p>:param writer: TensorBoard summary writer.
+:type writer: torch.utils.tensorboard.SummaryWriter
+:param model: Model instance.
+:type model: pyro.nn.PyroModule
+:param step: Current optimization step.
+:type step: int
+:param loss: Current loss value.
+:type loss: float
+:param spatial: If True, log spatial plots when possible.
+:type spatial: bool, optional
+:param coords: Spatial coordinates for plotting.
+:type coords: array-like or None, optional
+:param plot_dims: Grid dimensions <code class="docutils literal notranslate"><span class="pre">[rows,</span> <span class="pre">cols]</span></code> for spatial plots.
+:type plot_dims: sequence of int or None, optional</p>
+<p>.. py:function:: _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None)
+:module: pyroNMF.run_inference</p>
+<p>Auto-detect and persist model parameters into AnnData slots.</p>
+<p>:param result_anndata: AnnData object to populate with results.
+:type result_anndata: anndata.AnnData
+:param model: Trained model instance.
+:type model: pyro.nn.PyroModule
+:param fixed_pattern_names: Names for fixed patterns (semi-supervised models).
+:type fixed_pattern_names: sequence of str or None, optional
+:param num_learned_patterns: Number of learned patterns used to construct column names.
+:type num_learned_patterns: int or None, optional</p>
+<p>.. py:function:: save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, fixed_pattern_names=None, num_learned_patterns=None, supervised=None)
+:module: pyroNMF.run_inference</p>
+<p>Save inference outputs into AnnData <code class="docutils literal notranslate"><span class="pre">obsm</span></code>, <code class="docutils literal notranslate"><span class="pre">varm</span></code>, and <code class="docutils literal notranslate"><span class="pre">uns</span></code>.</p>
+<p>:param result_anndata: AnnData object to populate with results (typically a copy of input).
+:type result_anndata: anndata.AnnData
+:param model: Trained model instance.
+:type model: pyro.nn.PyroModule
+:param losses: Loss values recorded during training.
+:type losses: list[float]
+:param steps: Optimization steps corresponding to <code class="docutils literal notranslate"><span class="pre">losses</span></code>.
+:type steps: list[int]
+:param runtime: Runtime in seconds.
+:type runtime: int
+:param scale: Scale factor used for Gamma-based models.
+:type scale: torch.Tensor or float
+:param settings: Training settings metadata.
+:type settings: dict
+:param fixed_pattern_names: Names for fixed patterns in semi-supervised runs.
+:type fixed_pattern_names: sequence of str or None, optional
+:param num_learned_patterns: Number of learned patterns used to generate column names.
+:type num_learned_patterns: int or None, optional
+:param supervised: Included for compatibility; saved results are auto-detected.
+:type supervised: str or None, optional</p>
+<p>:returns: The AnnData object with results stored under:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>         - ``obsm``: ``loc_P``, ``last_P``, ``best_P``, and variants.
+         - ``varm``: ``loc_A``, ``last_A``, ``best_A``, and variants.
+         - ``uns``: training metadata, losses, settings, and scales.
+</pre></div>
+</div>
+<p>:rtype: anndata.AnnData</p>
+<p>.. py:function:: create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, scale, model_type, use_tensorboard_id=None, writer=None)
+:module: pyroNMF.run_inference</p>
+<p>Assemble a settings dictionary for persistence in <code class="docutils literal notranslate"><span class="pre">AnnData.uns</span></code>.</p>
+<p>:param num_patterns: Number of patterns learned.
+:type num_patterns: int
+:param num_steps: Number of training steps.
+:type num_steps: int
+:param device: Device used for training.
+:type device: torch.device
+:param NB_probs: Negative Binomial probability parameter.
+:type NB_probs: float
+:param use_chisq: Whether chi-squared loss was used.
+:type use_chisq: bool
+:param scale: Scale factor used by Gamma-based models.
+:type scale: float
+:param model_type: Model type string (e.g., <code class="docutils literal notranslate"><span class="pre">gamma_unsupervised</span></code>).
+:type model_type: str
+:param use_tensorboard_id: TensorBoard identifier string.
+:type use_tensorboard_id: str or None, optional
+:param writer: TensorBoard writer (used to record log dir).
+:type writer: SummaryWriter or None, optional</p>
+<p>:returns: Settings dictionary suitable for <code class="docutils literal notranslate"><span class="pre">AnnData.uns</span></code>.
+:rtype: dict</p>
+<p>.. py:function:: run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, plot_dims=None, scale=None, model_family=’gamma’)
+:module: pyroNMF.run_inference</p>
+<p>Run unsupervised NMF analysis on an AnnData object.</p>
+<p>:param data: AnnData object with raw counts in <code class="docutils literal notranslate"><span class="pre">.X</span></code>.
+:type data: anndata.AnnData
+:param num_patterns: Number of latent patterns to learn.
+:type num_patterns: int
+:param num_steps: Number of optimization steps.
+:type num_steps: int, optional
+:param device: Target device (<code class="docutils literal notranslate"><span class="pre">'cpu'</span></code>, <code class="docutils literal notranslate"><span class="pre">'cuda'</span></code>, <code class="docutils literal notranslate"><span class="pre">'mps'</span></code>). If None, autodetect.
+:type device: str or torch.device or None, optional
+:param NB_probs: Negative Binomial probability parameter.
+:type NB_probs: float, optional
+:param use_chisq: If True, include chi-squared loss term.
+:type use_chisq: bool, optional
+:param use_pois: If True, include Poisson log-likelihood term.
+:type use_pois: bool, optional
+:param use_tensorboard_id: TensorBoard logging identifier. If None, logging is disabled.
+:type use_tensorboard_id: str or None, optional
+:param spatial: If True, use <code class="docutils literal notranslate"><span class="pre">obsm['spatial']</span></code> for plotting and logging.
+:type spatial: bool, optional
+:param plot_dims: Grid dimensions <code class="docutils literal notranslate"><span class="pre">[rows,</span> <span class="pre">cols]</span></code> for spatial plots.
+:type plot_dims: sequence of int or None, optional
+:param scale: Scale factor for Gamma models. Currently computed from data
+regardless of this value.
+:type scale: float or None, optional
+:param model_family: Model family to use.
+:type model_family: {‘gamma’, ‘exponential’}, optional</p>
+<p>:returns: Copy of the input AnnData with results saved into <code class="docutils literal notranslate"><span class="pre">obsm</span></code>,
+<code class="docutils literal notranslate"><span class="pre">varm</span></code>, and <code class="docutils literal notranslate"><span class="pre">uns</span></code>.
+:rtype: anndata.AnnData</p>
+<p>.. py:function:: run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, device=None, NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, plot_dims=None, scale=None, model_family=’gamma’, supervision_type=’fixed_genes’)
+:module: pyroNMF.run_inference</p>
+<p>Run semi-supervised NMF analysis with fixed patterns.</p>
+<p>:param data: AnnData object with raw counts in <code class="docutils literal notranslate"><span class="pre">.X</span></code>.
+:type data: anndata.AnnData
+:param num_patterns: Number of additional patterns to learn.
+:type num_patterns: int
+:param fixed_patterns: Fixed patterns. Shape depends on <code class="docutils literal notranslate"><span class="pre">supervision_type</span></code>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>                      - ``fixed_genes``: ``(n_genes, n_fixed_patterns)``
+                      - ``fixed_samples``: ``(n_samples, n_fixed_patterns)``
+</pre></div>
+</div>
+<p>:type fixed_patterns: pandas.DataFrame
+:param num_steps: Number of optimization steps.
+:type num_steps: int, optional
+:param device: Target device (<code class="docutils literal notranslate"><span class="pre">'cpu'</span></code>, <code class="docutils literal notranslate"><span class="pre">'cuda'</span></code>, <code class="docutils literal notranslate"><span class="pre">'mps'</span></code>). If None, autodetect.
+:type device: str or torch.device or None, optional
+:param NB_probs: Negative Binomial probability parameter.
+:type NB_probs: float, optional
+:param use_chisq: If True, include chi-squared loss term.
+:type use_chisq: bool, optional
+:param use_pois: If True, include Poisson log-likelihood term.
+:type use_pois: bool, optional
+:param use_tensorboard_id: TensorBoard logging identifier. If None, logging is disabled.
+:type use_tensorboard_id: str or None, optional
+:param spatial: If True, use <code class="docutils literal notranslate"><span class="pre">obsm['spatial']</span></code> for plotting and logging.
+:type spatial: bool, optional
+:param plot_dims: Grid dimensions <code class="docutils literal notranslate"><span class="pre">[rows,</span> <span class="pre">cols]</span></code> for spatial plots.
+:type plot_dims: sequence of int or None, optional
+:param scale: Scale factor for Gamma models. Currently computed from data
+regardless of this value.
+:type scale: float or None, optional
+:param model_family: Model family to use.
+:type model_family: {‘gamma’, ‘exponential’}, optional
+:param supervision_type: Whether fixed patterns are provided across genes or samples.
+:type supervision_type: {‘fixed_genes’, ‘fixed_samples’}, optional</p>
+<p>:returns: Copy of the input AnnData with results saved into <code class="docutils literal notranslate"><span class="pre">obsm</span></code>,
+<code class="docutils literal notranslate"><span class="pre">varm</span></code>, and <code class="docutils literal notranslate"><span class="pre">uns</span></code>.
+:rtype: anndata.AnnData</p>
+</section>
+<section id="utilities">
+<h2>Utilities<a class="headerlink" href="#utilities" title="Link to this heading"></a></h2>
+<p>.. py:module:: pyroNMF.utils</p>
+<p>Utility functions for device selection and plotting.</p>
+<p>.. py:function:: detect_device()
+:module: pyroNMF.utils</p>
+<p>Select an available PyTorch device.</p>
+<p>:returns: <code class="docutils literal notranslate"><span class="pre">cuda</span></code> if available, otherwise <code class="docutils literal notranslate"><span class="pre">mps</span></code> if available, else <code class="docutils literal notranslate"><span class="pre">cpu</span></code>.
+:rtype: torch.device</p>
+<p>.. py:function:: plot_grid(patterns, coords, nrows, ncols, size=2, savename=None)
+:module: pyroNMF.utils</p>
+<p>Plot spatial patterns on a grid of scatter plots.</p>
+<p>:param patterns: Pattern matrix with shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">n_patterns)</span></code>.
+:type patterns: array-like
+:param coords: Spatial coordinates with shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">2)</span></code>.
+:type coords: array-like
+:param nrows: Number of rows in the plot grid.
+:type nrows: int
+:param ncols: Number of columns in the plot grid.
+:type ncols: int
+:param size: Marker size for scatter points.
+:type size: float, optional
+:param savename: If provided, saves the figure to this path.
+:type savename: str or None, optional</p>
+<p>.. py:function:: plot_grid_noAlpha(patterns, coords, nrows, ncols, s=4, savename=None)
+:module: pyroNMF.utils</p>
+<p>Plot spatial patterns without alpha scaling.</p>
+<p>:param patterns: Pattern matrix with shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">n_patterns)</span></code>.
+:type patterns: array-like
+:param coords: Spatial coordinates. If a mapping, expects <code class="docutils literal notranslate"><span class="pre">coords['x']</span></code> and
+<code class="docutils literal notranslate"><span class="pre">coords['y']</span></code>.
+:type coords: Mapping or array-like
+:param nrows: Number of rows in the plot grid.
+:type nrows: int
+:param ncols: Number of columns in the plot grid.
+:type ncols: int
+:param s: Marker size for scatter points.
+:type s: float, optional
+:param savename: If provided, saves the figure to this path.
+:type savename: str or None, optional</p>
+<p>.. py:function:: plot_results(adata, nrows, ncols, which=’best_P’, s=4, a=1, scale_alpha=False, scale_values=False, savename=None, title=None)
+:module: pyroNMF.utils</p>
+<p>Plot patterns stored in an AnnData object.</p>
+<p>:param adata: AnnData with spatial coordinates in <code class="docutils literal notranslate"><span class="pre">obsm['spatial']</span></code> and patterns
+stored in <code class="docutils literal notranslate"><span class="pre">obsm[which]</span></code>.
+:type adata: anndata.AnnData
+:param nrows: Number of rows in the plot grid.
+:type nrows: int
+:param ncols: Number of columns in the plot grid.
+:type ncols: int
+:param which: Key in <code class="docutils literal notranslate"><span class="pre">adata.obsm</span></code> containing pattern matrix to plot.
+:type which: str, optional
+:param s: Marker size for scatter points.
+:type s: float, optional
+:param a: Base alpha for scatter points.
+:type a: float, optional
+:param scale_alpha: If True, scale alpha by per-spot intensity.
+:type scale_alpha: bool, optional
+:param scale_values: If True, clip color scale to 5th-95th percentile.
+:type scale_values: bool, optional
+:param savename: If provided, saves the figure to this path.
+:type savename: str or None, optional
+:param title: Figure title.
+:type title: str or None, optional</p>
+</section>
+<section id="model-families">
+<h2>Model families<a class="headerlink" href="#model-families" title="Link to this heading"></a></h2>
+<p>.. py:module:: pyroNMF.models.gamma_NB_models</p>
+<p>Gamma-prior NMF models with Negative Binomial likelihoods.</p>
+<p>.. py:class:: Gamma_NegBinomial_base(*args: Any, **kwargs: Any)
+:module: pyroNMF.models.gamma_NB_models</p>
+<p>Bases: :py:class:<code class="docutils literal notranslate"><span class="pre">~pyro.nn.PyroModule</span></code></p>
+<p>Gamma-prior NMF model with Negative Binomial likelihood.</p>
+<p>Factorizes the observed count matrix <code class="docutils literal notranslate"><span class="pre">D</span></code> (samples x genes) into
+<code class="docutils literal notranslate"><span class="pre">P</span> <span class="pre">&#64;</span> <span class="pre">A</span></code> with Gamma priors on both factors. Optionally adds
+chi-squared and/or Poisson terms to the loss, and tracks the best
+parameters by chi-squared during training.</p>
+<p>:param num_samples: Number of samples (rows in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_samples: int
+:param num_genes: Number of genes/features (columns in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_genes: int
+:param num_patterns: Number of latent patterns to learn.
+:type num_patterns: int
+:param use_chisq: If True, adds a chi-squared loss term via <code class="docutils literal notranslate"><span class="pre">pyro.factor</span></code>.
+:type use_chisq: bool, optional
+:param use_pois: If True, adds a Poisson log-likelihood term via <code class="docutils literal notranslate"><span class="pre">pyro.factor</span></code>.
+:type use_pois: bool, optional
+:param scale: Scalar used as the second parameter to <code class="docutils literal notranslate"><span class="pre">dist.Gamma</span></code>.
+:type scale: float, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param device: Device for parameters and intermediate tensors.
+:type device: torch.device, optional</p>
+<p>.. py:method:: Gamma_NegBinomial_base.forward(D, U)
+:module: pyroNMF.models.gamma_NB_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Run one stochastic forward pass of the model.
+
+  :param D: Observed count matrix with shape ``(num_samples, num_genes)``.
+  :type D: torch.Tensor
+  :param U: Per-entry scale/uncertainty for chi-squared computation, same
+            shape as ``D``.
+  :type U: torch.Tensor
+</pre></div>
+</div>
+<p>.. py:method:: Gamma_NegBinomial_base.guide()
+:module: pyroNMF.models.gamma_NB_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Placeholder guide (use AutoNormal externally).
+</pre></div>
+</div>
+<p>.. py:class:: Gamma_NegBinomial_SSFixedGenes(*args: Any, **kwargs: Any)
+:module: pyroNMF.models.gamma_NB_models</p>
+<p>Bases: :py:class:<code class="docutils literal notranslate"><span class="pre">~pyroNMF.models.gamma_NB_models.Gamma_NegBinomial_base</span></code></p>
+<p>Semi-supervised Gamma model with fixed gene patterns.</p>
+<p>Extends <code class="docutils literal notranslate"><span class="pre">Gamma_NegBinomial_base</span></code> by fixing a set of patterns over genes
+and learning additional patterns. The fixed patterns are concatenated to
+the learned <code class="docutils literal notranslate"><span class="pre">A</span></code> matrix during reconstruction.</p>
+<p>:param num_samples: Number of samples (rows in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_samples: int
+:param num_genes: Number of genes/features (columns in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_genes: int
+:param num_patterns: Number of additional patterns to learn.
+:type num_patterns: int
+:param fixed_patterns: Fixed patterns with shape <code class="docutils literal notranslate"><span class="pre">(num_genes,</span> <span class="pre">num_fixed_patterns)</span></code>.
+:type fixed_patterns: array-like
+:param use_chisq: If True, adds a chi-squared loss term.
+:type use_chisq: bool, optional
+:param use_pois: If True, adds a Poisson log-likelihood term.
+:type use_pois: bool, optional
+:param scale: Scalar used as the second parameter to <code class="docutils literal notranslate"><span class="pre">dist.Gamma</span></code>.
+:type scale: float, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param device: Device for parameters and tensors.
+:type device: torch.device, optional</p>
+<p>.. py:method:: Gamma_NegBinomial_SSFixedGenes.forward(D, U)
+:module: pyroNMF.models.gamma_NB_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Run one stochastic forward pass with fixed gene patterns.
+
+  :param D: Observed count matrix with shape ``(num_samples, num_genes)``.
+  :type D: torch.Tensor
+  :param U: Per-entry scale/uncertainty for chi-squared computation.
+  :type U: torch.Tensor
+</pre></div>
+</div>
+<p>.. py:method:: Gamma_NegBinomial_SSFixedGenes.guide()
+:module: pyroNMF.models.gamma_NB_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Placeholder guide (use AutoNormal externally).
+</pre></div>
+</div>
+<p>.. py:class:: Gamma_NegBinomial_SSFixedSamples(*args: Any, **kwargs: Any)
+:module: pyroNMF.models.gamma_NB_models</p>
+<p>Bases: :py:class:<code class="docutils literal notranslate"><span class="pre">~pyroNMF.models.gamma_NB_models.Gamma_NegBinomial_base</span></code></p>
+<p>Semi-supervised Gamma model with fixed sample patterns.</p>
+<p>Extends <code class="docutils literal notranslate"><span class="pre">Gamma_NegBinomial_base</span></code> by fixing a set of patterns over samples
+and learning additional patterns. The fixed patterns are concatenated to
+the learned <code class="docutils literal notranslate"><span class="pre">P</span></code> matrix during reconstruction.</p>
+<p>:param num_samples: Number of samples (rows in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_samples: int
+:param num_genes: Number of genes/features (columns in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_genes: int
+:param num_patterns: Number of additional patterns to learn.
+:type num_patterns: int
+:param fixed_patterns: Fixed patterns with shape <code class="docutils literal notranslate"><span class="pre">(num_samples,</span> <span class="pre">num_fixed_patterns)</span></code>.
+:type fixed_patterns: array-like
+:param use_chisq: If True, adds a chi-squared loss term.
+:type use_chisq: bool, optional
+:param use_pois: If True, adds a Poisson log-likelihood term.
+:type use_pois: bool, optional
+:param scale: Scalar used as the second parameter to <code class="docutils literal notranslate"><span class="pre">dist.Gamma</span></code>.
+:type scale: float, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param device: Device for parameters and tensors.
+:type device: torch.device, optional</p>
+<p>.. py:method:: Gamma_NegBinomial_SSFixedSamples.forward(D, U)
+:module: pyroNMF.models.gamma_NB_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Run one stochastic forward pass with fixed sample patterns.
+
+  :param D: Observed count matrix with shape ``(num_samples, num_genes)``.
+  :type D: torch.Tensor
+  :param U: Per-entry scale/uncertainty for chi-squared computation.
+  :type U: torch.Tensor
+</pre></div>
+</div>
+<p>.. py:function:: guide(D)
+:module: pyroNMF.models.gamma_NB_models</p>
+<p>Placeholder guide (use AutoNormal externally).</p>
+<p>.. py:module:: pyroNMF.models.exp_pois_models</p>
+<p>Exponential-prior NMF models with Negative Binomial likelihoods.</p>
+<p>.. py:class:: Exponential_base(*args: Any, **kwargs: Any)
+:module: pyroNMF.models.exp_pois_models</p>
+<p>Bases: :py:class:<code class="docutils literal notranslate"><span class="pre">~pyro.nn.PyroModule</span></code></p>
+<p>Exponential-prior NMF model with Negative Binomial likelihood.</p>
+<p>Factorizes the observed count matrix <code class="docutils literal notranslate"><span class="pre">D</span></code> (samples x genes) into
+<code class="docutils literal notranslate"><span class="pre">P</span> <span class="pre">&#64;</span> <span class="pre">A</span></code> with Exponential priors on both factors. Optionally adds
+chi-squared and/or Poisson terms to the loss, and tracks the best
+parameters by chi-squared during training.</p>
+<p>:param num_samples: Number of samples (rows in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_samples: int
+:param num_genes: Number of genes/features (columns in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_genes: int
+:param num_patterns: Number of latent patterns to learn.
+:type num_patterns: int
+:param use_chisq: If True, adds a chi-squared loss term via <code class="docutils literal notranslate"><span class="pre">pyro.factor</span></code>.
+:type use_chisq: bool, optional
+:param use_pois: If True, adds a Poisson log-likelihood term via <code class="docutils literal notranslate"><span class="pre">pyro.factor</span></code>.
+:type use_pois: bool, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param device: Device for parameters and intermediate tensors.
+:type device: torch.device, optional</p>
+<p>.. py:method:: Exponential_base.forward(D, U)
+:module: pyroNMF.models.exp_pois_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Run one stochastic forward pass of the model.
+
+  :param D: Observed count matrix with shape ``(num_samples, num_genes)``.
+  :type D: torch.Tensor
+  :param U: Per-entry scale/uncertainty for chi-squared computation, same
+            shape as ``D``.
+  :type U: torch.Tensor
+</pre></div>
+</div>
+<p>.. py:method:: Exponential_base.guide()
+:module: pyroNMF.models.exp_pois_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Placeholder guide (use AutoNormal externally).
+</pre></div>
+</div>
+<p>.. py:class:: Exponential_SSFixedGenes(*args: Any, **kwargs: Any)
+:module: pyroNMF.models.exp_pois_models</p>
+<p>Bases: :py:class:<code class="docutils literal notranslate"><span class="pre">~pyroNMF.models.exp_pois_models.Exponential_base</span></code></p>
+<p>Semi-supervised Exponential model with fixed gene patterns.</p>
+<p>Extends <code class="docutils literal notranslate"><span class="pre">Exponential_base</span></code> by fixing a set of patterns over genes and
+learning additional patterns. The fixed patterns are concatenated to the
+learned <code class="docutils literal notranslate"><span class="pre">A</span></code> matrix during reconstruction.</p>
+<p>:param num_samples: Number of samples (rows in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_samples: int
+:param num_genes: Number of genes/features (columns in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_genes: int
+:param num_patterns: Number of additional patterns to learn.
+:type num_patterns: int
+:param fixed_patterns: Fixed patterns with shape <code class="docutils literal notranslate"><span class="pre">(num_genes,</span> <span class="pre">num_fixed_patterns)</span></code>.
+:type fixed_patterns: array-like
+:param use_chisq: If True, adds a chi-squared loss term.
+:type use_chisq: bool, optional
+:param use_pois: If True, adds a Poisson log-likelihood term.
+:type use_pois: bool, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param device: Device for parameters and tensors.
+:type device: torch.device, optional</p>
+<p>.. py:method:: Exponential_SSFixedGenes.forward(D, U)
+:module: pyroNMF.models.exp_pois_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Run one stochastic forward pass with fixed gene patterns.
+
+  :param D: Observed count matrix with shape ``(num_samples, num_genes)``.
+  :type D: torch.Tensor
+  :param U: Per-entry scale/uncertainty for chi-squared computation.
+  :type U: torch.Tensor
+</pre></div>
+</div>
+<p>.. py:method:: Exponential_SSFixedGenes.guide()
+:module: pyroNMF.models.exp_pois_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Placeholder guide (use AutoNormal externally).
+</pre></div>
+</div>
+<p>.. py:class:: Exponential_SSFixedSamples(*args: Any, **kwargs: Any)
+:module: pyroNMF.models.exp_pois_models</p>
+<p>Bases: :py:class:<code class="docutils literal notranslate"><span class="pre">~pyroNMF.models.exp_pois_models.Exponential_base</span></code></p>
+<p>Semi-supervised Exponential model with fixed sample patterns.</p>
+<p>Extends <code class="docutils literal notranslate"><span class="pre">Exponential_base</span></code> by fixing a set of patterns over samples and
+learning additional patterns. The fixed patterns are concatenated to the
+learned <code class="docutils literal notranslate"><span class="pre">P</span></code> matrix during reconstruction.</p>
+<p>:param num_samples: Number of samples (rows in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_samples: int
+:param num_genes: Number of genes/features (columns in <code class="docutils literal notranslate"><span class="pre">D</span></code>).
+:type num_genes: int
+:param num_patterns: Number of additional patterns to learn.
+:type num_patterns: int
+:param fixed_patterns: Fixed patterns with shape <code class="docutils literal notranslate"><span class="pre">(num_samples,</span> <span class="pre">num_fixed_patterns)</span></code>.
+:type fixed_patterns: array-like
+:param use_chisq: If True, adds a chi-squared loss term.
+:type use_chisq: bool, optional
+:param use_pois: If True, adds a Poisson log-likelihood term.
+:type use_pois: bool, optional
+:param NB_probs: Probability parameter for the Negative Binomial likelihood.
+:type NB_probs: float, optional
+:param device: Device for parameters and tensors.
+:type device: torch.device, optional</p>
+<p>.. py:method:: Exponential_SSFixedSamples.forward(D, U)
+:module: pyroNMF.models.exp_pois_models</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  Run one stochastic forward pass with fixed sample patterns.
+
+  :param D: Observed count matrix with shape ``(num_samples, num_genes)``.
+  :type D: torch.Tensor
+  :param U: Per-entry scale/uncertainty for chi-squared computation.
+  :type U: torch.Tensor
+</pre></div>
+</div>
+<p>.. py:function:: guide(D)
+:module: pyroNMF.models.exp_pois_models</p>
+<p>Placeholder guide (use AutoNormal externally).</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="anndata.html" class="btn btn-neutral float-left" title="AnnData Integration" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright .</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

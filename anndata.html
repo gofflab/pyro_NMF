@@ -1,0 +1,182 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AnnData Integration &mdash; pyroNMF 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API Reference" href="api.html" />
+    <link rel="prev" title="Tutorial (Worked Example)" href="tutorial.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            pyroNMF
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial.html">Tutorial (Worked Example)</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">AnnData Integration</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#input-expectations">Input expectations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#output-structure">Output structure</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#obsm-sample-level-factors"><code class="docutils literal notranslate"><span class="pre">obsm</span></code> (sample-level factors)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#varm-gene-level-factors"><code class="docutils literal notranslate"><span class="pre">varm</span></code> (gene-level factors)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#uns-metadata"><code class="docutils literal notranslate"><span class="pre">uns</span></code> (metadata)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#pattern-naming">Pattern naming</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">pyroNMF</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">AnnData Integration</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/anndata.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="anndata-integration">
+<h1>AnnData Integration<a class="headerlink" href="#anndata-integration" title="Link to this heading"></a></h1>
+<p>pyroNMF is designed to accept an AnnData object as input and return a copy
+of that AnnData object with results stored in <code class="docutils literal notranslate"><span class="pre">obsm</span></code>, <code class="docutils literal notranslate"><span class="pre">varm</span></code>, and <code class="docutils literal notranslate"><span class="pre">uns</span></code>.</p>
+<section id="input-expectations">
+<h2>Input expectations<a class="headerlink" href="#input-expectations" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">adata.X</span></code>: raw counts matrix of shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">n_genes)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">adata.obsm['spatial']</span></code> (optional): coordinates of shape <code class="docutils literal notranslate"><span class="pre">(n_samples,</span> <span class="pre">2)</span></code>
+for spatial visualization.</p></li>
+</ul>
+</section>
+<section id="output-structure">
+<h2>Output structure<a class="headerlink" href="#output-structure" title="Link to this heading"></a></h2>
+<p>The high-level wrappers return a new AnnData with the following keys:</p>
+<section id="obsm-sample-level-factors">
+<h3><code class="docutils literal notranslate"><span class="pre">obsm</span></code> (sample-level factors)<a class="headerlink" href="#obsm-sample-level-factors" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">loc_P</span></code>: learned location parameters for <code class="docutils literal notranslate"><span class="pre">P</span></code> (Gamma models).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">last_P</span></code>: final sampled <code class="docutils literal notranslate"><span class="pre">P</span></code> from the last iteration.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">best_P</span></code>: sampled <code class="docutils literal notranslate"><span class="pre">P</span></code> at the best chi-squared iteration.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fixed_P</span></code>: fixed patterns over samples (semi-supervised).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">P_total</span></code>: concatenated fixed + learned <code class="docutils literal notranslate"><span class="pre">P</span></code> (semi-supervised).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">best_P_total</span></code>: concatenated fixed + best learned <code class="docutils literal notranslate"><span class="pre">P</span></code>.</p></li>
+</ul>
+</section>
+<section id="varm-gene-level-factors">
+<h3><code class="docutils literal notranslate"><span class="pre">varm</span></code> (gene-level factors)<a class="headerlink" href="#varm-gene-level-factors" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">loc_A</span></code>: learned location parameters for <code class="docutils literal notranslate"><span class="pre">A</span></code> (Gamma models).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">last_A</span></code>: final sampled <code class="docutils literal notranslate"><span class="pre">A</span></code> from the last iteration.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">best_A</span></code>: sampled <code class="docutils literal notranslate"><span class="pre">A</span></code> at the best chi-squared iteration.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fixed_A</span></code>: fixed patterns over genes (semi-supervised).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">A_total</span></code>: concatenated fixed + learned <code class="docutils literal notranslate"><span class="pre">A</span></code> (semi-supervised).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">best_A_total</span></code>: concatenated fixed + best learned <code class="docutils literal notranslate"><span class="pre">A</span></code>.</p></li>
+</ul>
+</section>
+<section id="uns-metadata">
+<h3><code class="docutils literal notranslate"><span class="pre">uns</span></code> (metadata)<a class="headerlink" href="#uns-metadata" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">runtime</span> <span class="pre">(seconds)</span></code>: total runtime for the training loop.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">loss</span></code>: DataFrame of ELBO loss values, indexed by step.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">step_w_bestChisq</span></code>: step index with the best chi-squared value (if tracked).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">best_chisq</span></code>: best chi-squared value (if tracked).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">scale</span></code>: scale factor used for Gamma models.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">scale_P</span></code> / <code class="docutils literal notranslate"><span class="pre">scale_A</span></code>: scalar Exponential scales (Exponential models).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">best_scale_P</span></code> / <code class="docutils literal notranslate"><span class="pre">best_scale_A</span></code>: best Exponential scales by chi-squared.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">settings</span></code>: DataFrame with the run configuration.</p></li>
+</ul>
+</section>
+</section>
+<section id="pattern-naming">
+<h2>Pattern naming<a class="headerlink" href="#pattern-naming" title="Link to this heading"></a></h2>
+<p>Learned patterns are labeled <code class="docutils literal notranslate"><span class="pre">Pattern_1</span></code>, <code class="docutils literal notranslate"><span class="pre">Pattern_2</span></code>, … by default.
+If you provide fixed patterns via a DataFrame, their column names are
+preserved and included ahead of the learned patterns for semi-supervised
+runs.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="tutorial.html" class="btn btn-neutral float-left" title="Tutorial (Worked Example)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="api.html" class="btn btn-neutral float-right" title="API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright .</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
