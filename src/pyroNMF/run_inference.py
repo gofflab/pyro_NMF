@@ -466,6 +466,45 @@ def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None,
         print("Saving best_A_total in anndata.varm['best_A_total']")
 
 
+    ### Scale patterns to 1 and adjust gene weights accordingly
+    # Scale both best and last sampled pattern, but need to use total patterns for supervised models since these are the same size
+    if "best_P_total" in result_anndata.obsm:
+        P_to_scale = result_anndata.obsm["best_P_total"]
+    elif "best_P" in result_anndata.obsm:
+        P_to_scale = result_anndata.obsm["best_P"]
+    P_scaled = P_to_scale.div(P_to_scale.sum(axis=0), axis=1)
+    result_anndata.obsm["best_P_scaled"] = P_scaled
+    print("Saving best_P_scaled in anndata.obsm['best_P_scaled']")
+        
+    # Adjust A accordingly
+    if "best_A_total" in result_anndata.varm:
+        A_to_adjust = result_anndata.varm["best_A_total"]
+    elif "best_A" in result_anndata.varm:
+        A_to_adjust = result_anndata.varm["best_A"]
+    A_adjusted = A_to_adjust.multiply(P_to_scale.sum(axis=0), axis=1)
+    result_anndata.varm["best_A_scaled"] = A_adjusted
+    print("Saving best_A_scaled in anndata.varm['best_A_scaled']")
+
+    # Scale both best and last sampled pattern, but need to use total patterns for supervised models since these are the same size
+    if "P_total" in result_anndata.obsm:
+        P_to_scale = result_anndata.obsm["P_total"]
+    elif "last_P" in result_anndata.obsm:
+        P_to_scale = result_anndata.obsm["last_P"]
+    P_scaled = P_to_scale.div(P_to_scale.sum(axis=0), axis=1)
+    result_anndata.obsm["last_P_scaled"] = P_scaled
+    print("Saving last_P_scaled in anndata.obsm['last_P_scaled']")
+        
+    # Adjust A accordingly
+    if "A_total" in result_anndata.varm:
+        A_to_adjust = result_anndata.varm["A_total"]
+    elif "last_A" in result_anndata.varm:
+        A_to_adjust = result_anndata.varm["last_A"]
+    A_adjusted = A_to_adjust.multiply(P_to_scale.sum(axis=0), axis=1)
+    result_anndata.varm["last_A_scaled"] = A_adjusted
+    print("Saving last_A_scaled in anndata.varm['last_A_scaled']")
+
+
+
 def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, 
                            fixed_pattern_names=None, num_learned_patterns=None, supervised=None):
     """

@@ -40,12 +40,13 @@ gene_layers = pd.DataFrame(
 
 outputDir = "/raid/kyla/projects/pyro_NMF/analyses/test"
 #%% RUN ALL VARIANTS
+num_steps = 1000
 
 ##### RUN 1, Unsupervised gamma #####    
 os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory for tensorboard logging
 nmf_res = run_nmf_unsupervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
-                               num_steps=100, # num_steps: Number of steps is the number of training iterations
+                               num_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_gamma_uns', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -63,7 +64,7 @@ if torch.cuda.is_available():
 os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory for tensorboard logging
 nmf_res = run_nmf_unsupervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
-                               num_steps=100, # num_steps: Number of steps is the number of training iterations
+                               num_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_exponential_uns', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -82,7 +83,7 @@ os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory f
 nmf_res = run_nmf_supervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
                                fixed_patterns=layers,
-                               num_steps=100, # num_steps: Number of steps is the number of training iterations
+                               num_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_gamma_SSp', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -102,7 +103,7 @@ os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory f
 nmf_res = run_nmf_supervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
                                fixed_patterns=layers,
-                               num_steps=100, # num_steps: Number of steps is the number of training iterations
+                               num_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_exponential_SSp', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -123,7 +124,7 @@ os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory f
 nmf_res = run_nmf_supervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
                                fixed_patterns=gene_layers,
-                               num_steps=100, # num_steps: Number of steps is the number of training iterations
+                               num_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_gamma_SSg', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -143,7 +144,7 @@ os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory f
 nmf_res = run_nmf_supervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
                                fixed_patterns=gene_layers,
-                               num_steps=100, # num_steps: Number of steps is the number of training iterations
+                               num_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_exponential_SSg', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
