@@ -16,7 +16,7 @@ import gc
 
 
 #%% LOAD DATA
-data = ad.read_h5ad('/raid/kyla/data/Zhuang-ABCA-1-raw_wMeta_wAnnotations_wAtlas_sub20_KW.h5ad') 
+data = ad.read_h5ad('/raid/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') 
 #data = data[data.obsm['atlas']['Isocortex']]
 coords = data.obs.loc[:,['x','y']] # shape: samples x 2
 coords['y'] = -1*coords['y'] # specific for this dataset
@@ -46,11 +46,11 @@ os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory f
 nmf_res = run_nmf_unsupervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
                                num_steps=1000, # num_steps: Number of steps is the number of training iterations
-                               device='cpu',
+                               device='cuda',
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_exp_uns_batched', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
-                               model_family='exponential', batch_size=1000)
+                               model_family='exponential', batch_size=None)
 nmf_res.write_h5ad(outputDir + '/unsupervised_exponential_batched.h5ad')
 
 pyro.clear_param_store() 
