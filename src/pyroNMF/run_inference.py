@@ -66,13 +66,14 @@ def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
     return coords
 
 
-def prepare_tensors(data, device=None):
+def prepare_tensors(data, device=None, keep_on_cpu=False):
     """
     Prepare and move tensors to the specified device.
     
     Parameters:
     - data: AnnData object containing the data
     - device: Target device ('cpu', 'cuda', 'mps', or None for auto-detection)
+    - keep_on_cpu: Keep data tensors on CPU even if a GPU device is selected
     
     Returns:
     - D: Data tensor
@@ -87,12 +88,17 @@ def prepare_tensors(data, device=None):
     
     if hasattr(data.X, 'toarray'):
         print('Setting sparse D')
-        D = torch.tensor(data.X.toarray(), dtype=default_dtype).to(device)
+        D = torch.tensor(data.X.toarray(), dtype=default_dtype)
     else:
         print('Setting D')
-        D = torch.tensor(data.X, dtype=default_dtype).to(device)
-    U = (D * 0.1).clip(min=0.3).to(device)
-    scale = torch.tensor((D.cpu().numpy().std()) * 2, dtype=default_dtype, device=device)
+        D = torch.tensor(data.X, dtype=default_dtype)
+    if not keep_on_cpu:
+        D = D.to(device)
+    U = (D * 0.1).clip(min=0.3)
+    if not keep_on_cpu:
+        U = U.to(device)
+    scale_device = torch.device('cpu') if keep_on_cpu else device
+    scale = torch.tensor((D.cpu().numpy().std()) * 2, dtype=default_dtype, device=scale_device)
     
     return D, U, scale, device
 
@@ -569,7 +575,12 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     - result_anndata: AnnData object with results
     """
     coords = validate_data(data, spatial, plot_dims, num_patterns)
-    D, U, scale, device = prepare_tensors(data, device)
+    keep_on_cpu = (
+        batch_size is not None
+        and model_family == 'exponential'
+        and batch_size < data.shape[0]
+    )
+    D, U, scale, device = prepare_tensors(data, device, keep_on_cpu=keep_on_cpu)
     print(f"D shape: {D.shape}, U shape: {U.shape}")
     
     model_type = f'{model_family}_unsupervised'
@@ -623,7 +634,12 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     - result_anndata: AnnData object with results
     """
     coords = validate_data(data, spatial, plot_dims, num_patterns)
-    D, U, scale, device = prepare_tensors(data, device)
+    keep_on_cpu = (
+        batch_size is not None
+        and model_family == 'exponential'
+        and batch_size < data.shape[0]
+    )
+    D, U, scale, device = prepare_tensors(data, device, keep_on_cpu=keep_on_cpu)
     
     fixed_pattern_names = list(fixed_patterns.columns)
     fixed_patterns_tensor = torch.tensor(fixed_patterns.to_numpy(), dtype=torch.float32).to(device)
