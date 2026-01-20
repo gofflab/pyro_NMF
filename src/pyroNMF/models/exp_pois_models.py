@@ -7,6 +7,7 @@ from pyro.nn.module import PyroParam
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 
 #%% Enable Validations
 pyro.enable_validation(True)
@@ -87,6 +88,23 @@ class Exponential_base(PyroModule):
             return idx
         return idx.to(self.storage_device)
 
+    def _nb_kwargs(self, like_tensor):
+        if like_tensor.device.type == "mps":
+            logits = math.log(self.NB_probs) - math.log1p(-self.NB_probs)
+            return {"logits": logits}
+        return {"probs": self.NB_probs}
+
+    def _nb_log_prob(self, counts, total_count):
+        probs = float(self.NB_probs)
+        log_p = math.log(probs)
+        log1m_p = math.log1p(-probs)
+        return (
+            torch.lgamma(counts + total_count)
+            - torch.lgamma(total_count)
+            - torch.lgamma(counts + 1)
+            + total_count * log1m_p
+            + counts * log_p
+        ).sum()
     def forward(self, D, U):
         self.iter += 1 # keep a running total of iterations
 
@@ -147,7 +165,13 @@ class Exponential_base(PyroModule):
                 self.sum_A2 += torch.square(An_store)
                 self.sum_P2 += torch.square(Pn_store)
 
-            pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
+            if D_reconstructed.device.type == "mps":
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_log_prob = self._nb_log_prob(D, theta_nb)
+                pyro.factor("D", nb_log_prob)
+            else:
+                nb_kwargs = self._nb_kwargs(D_reconstructed)
+                pyro.sample("D", dist.NegativeBinomial(D_reconstructed, **nb_kwargs).to_event(2), obs=D)
             return
 
         # Nested plates for pixel-wise independence
@@ -183,7 +207,7 @@ class Exponential_base(PyroModule):
             chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
             chi2_scaled = chi2 * batch_scale
             self.chi2  = chi2_scaled
-            theta = self.D_reconstructed
+            theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
             poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
             poisL_scaled = poisL * batch_scale
             self.pois  = poisL_scaled
@@ -203,7 +227,7 @@ class Exponential_base(PyroModule):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed
+                theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
                 poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
                 poisL_scaled = poisL * batch_scale
                 # Addition to Elbow Loss - should make this at least as large as Elbow
@@ -220,7 +244,17 @@ class Exponential_base(PyroModule):
                 self.sum_P2[batch_idx_store] += torch.square(Pn_store)
                 self.sum_A2 += torch.square(An_store)
 
-            pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(1), obs=D_b) 
+            if D_reconstructed.device.type == "mps":
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_log_prob = self._nb_log_prob(D_b, theta_nb) * batch_scale
+            else:
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_kwargs = self._nb_kwargs(theta_nb)
+                pyro.sample("D", dist.NegativeBinomial(theta_nb, **nb_kwargs).to_event(1), obs=D_b)
+                nb_log_prob = None
+
+        if D_reconstructed.device.type == "mps" and nb_log_prob is not None:
+            pyro.factor("D", nb_log_prob)
 
     def guide(D):
         pass
@@ -325,7 +359,13 @@ class Exponential_SSFixedGenes(Exponential_base):
                 self.sum_P2 += torch.square(Pn_store)
                 self.sum_A2 += torch.square(An_store)
 
-            pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
+            if D_reconstructed.device.type == "mps":
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_log_prob = self._nb_log_prob(D, theta_nb)
+                pyro.factor("D", nb_log_prob)
+            else:
+                nb_kwargs = self._nb_kwargs(D_reconstructed)
+                pyro.sample("D", dist.NegativeBinomial(D_reconstructed, **nb_kwargs).to_event(2), obs=D) 
             return
 
         # Minibatch path
@@ -362,7 +402,7 @@ class Exponential_SSFixedGenes(Exponential_base):
             chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
             chi2_scaled = chi2 * batch_scale
             self.chi2  = chi2_scaled
-            theta = self.D_reconstructed
+            theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
             poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
             poisL_scaled = poisL * batch_scale
             self.pois  = poisL_scaled
@@ -381,7 +421,7 @@ class Exponential_SSFixedGenes(Exponential_base):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed
+                theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
                 poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
                 poisL_scaled = poisL * batch_scale
                 # Addition to Elbow Loss - should make this at least as large as Elbow
@@ -398,7 +438,17 @@ class Exponential_SSFixedGenes(Exponential_base):
                 self.sum_P2[batch_idx_store] += torch.square(Pn_store)
                 self.sum_A2 += torch.square(An_store)
 
-            pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(1), obs=D_b) 
+            if D_reconstructed.device.type == "mps":
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_log_prob = self._nb_log_prob(D_b, theta_nb) * batch_scale
+            else:
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_kwargs = self._nb_kwargs(theta_nb)
+                pyro.sample("D", dist.NegativeBinomial(theta_nb, **nb_kwargs).to_event(1), obs=D_b) 
+                nb_log_prob = None
+
+        if D_reconstructed.device.type == "mps" and nb_log_prob is not None:
+            pyro.factor("D", nb_log_prob)
 
     def guide(D):
         pass
@@ -512,7 +562,13 @@ class Exponential_SSFixedSamples(Exponential_base):
                 self.sum_P2 += torch.square(Pn_store)
                 self.sum_A2 += torch.square(An_store)
             
-            pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
+            if D_reconstructed.device.type == "mps":
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_log_prob = self._nb_log_prob(D, theta_nb)
+                pyro.factor("D", nb_log_prob)
+            else:
+                nb_kwargs = self._nb_kwargs(D_reconstructed)
+                pyro.sample("D", dist.NegativeBinomial(D_reconstructed, **nb_kwargs).to_event(2), obs=D) 
             return
 
         # Minibatch path
@@ -552,7 +608,7 @@ class Exponential_SSFixedSamples(Exponential_base):
             chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
             chi2_scaled = chi2 * batch_scale
             self.chi2  = chi2_scaled
-            theta = self.D_reconstructed
+            theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
             poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
             poisL_scaled = poisL * batch_scale
             self.pois  = poisL_scaled
@@ -571,7 +627,7 @@ class Exponential_SSFixedSamples(Exponential_base):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed
+                theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
                 poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
                 poisL_scaled = poisL * batch_scale
                 # Addition to Elbow Loss - should make this at least as large as Elbow
@@ -588,7 +644,17 @@ class Exponential_SSFixedSamples(Exponential_base):
                 self.sum_P2[batch_idx_store] += torch.square(Pn_store)
                 self.sum_A2 += torch.square(An_store)
             
-            pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(1), obs=D_b) 
+            if D_reconstructed.device.type == "mps":
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_log_prob = self._nb_log_prob(D_b, theta_nb) * batch_scale
+            else:
+                theta_nb = D_reconstructed.clamp_min(torch.finfo(D_reconstructed.dtype).eps)
+                nb_kwargs = self._nb_kwargs(theta_nb)
+                pyro.sample("D", dist.NegativeBinomial(theta_nb, **nb_kwargs).to_event(1), obs=D_b) 
+                nb_log_prob = None
+
+        if D_reconstructed.device.type == "mps" and nb_log_prob is not None:
+            pyro.factor("D", nb_log_prob)
 
 
 def guide(D):
