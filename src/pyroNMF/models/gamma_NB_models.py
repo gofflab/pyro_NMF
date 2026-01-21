@@ -180,7 +180,10 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
         self.sum_A2 = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
 
         #### Fixed patterns are samples x patterns ####
-        self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
+        if torch.is_tensor(fixed_patterns):
+            self.fixed_A = fixed_patterns.detach().clone().to(self.device, dtype=default_dtype)
+        else:
+            self.fixed_A = torch.tensor(fixed_patterns, device=self.device, dtype=default_dtype) # tensor, not updatable
 
     def forward(self, D, U):
 
@@ -284,7 +287,10 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
         self.sum_P2 = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
 
         #### Fixed patterns are samples x patterns ####
-        self.fixed_P = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
+        if torch.is_tensor(fixed_patterns):
+            self.fixed_P = fixed_patterns.detach().clone().to(self.device, dtype=default_dtype)
+        else:
+            self.fixed_P = torch.tensor(fixed_patterns, device=self.device, dtype=default_dtype) # tensor, not updatable
 
     def forward(self, D, U):
 
@@ -348,4 +354,3 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
 
 def guide(D):
     pass
-

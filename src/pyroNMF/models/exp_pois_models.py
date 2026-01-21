@@ -25,7 +25,8 @@ class Exponential_base(PyroModule):
                 #scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu'),
-                batch_size=None
+                batch_size=None,
+                param_P=False
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
     
@@ -41,6 +42,7 @@ class Exponential_base(PyroModule):
         self.device = device
         self.batch_size = batch_size
         self.storage_device = torch.device('cpu') if batch_size is not None else self.device
+        self.param_P = param_P
 
         ## Print settings
         print(f" ################# Running Exponential Model #################")
@@ -271,11 +273,22 @@ class Exponential_SSFixedGenes(Exponential_base):
                 #scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu'),
-                batch_size=None
+                batch_size=None,
+                param_P=False
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device, batch_size) 
+        super().__init__(
+            num_samples,
+            num_genes,
+            num_patterns,
+            use_chisq,
+            use_pois,
+            NB_probs,
+            device,
+            batch_size,
+            param_P,
+        )
 
         ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
         self.fixed_patterns = fixed_patterns # of shape genes x fixed patterns
@@ -293,7 +306,10 @@ class Exponential_SSFixedGenes(Exponential_base):
         self.sum_A2 = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.storage_device, dtype=default_dtype)
 
         #### Fixed patterns are samples x patterns ####
-        self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
+        if torch.is_tensor(fixed_patterns):
+            self.fixed_A = fixed_patterns.detach().clone().to(self.device, dtype=default_dtype)
+        else:
+            self.fixed_A = torch.tensor(fixed_patterns, device=self.device, dtype=default_dtype) # tensor, not updatable
 
     def forward(self, D, U):
 
@@ -301,9 +317,12 @@ class Exponential_SSFixedGenes(Exponential_base):
 
         if self.batch_size is None or self.batch_size >= self.num_samples:
             # Full-batch path (original behavior)
-            with pyro.plate("patterns", self.num_patterns, dim = -2):
-                with pyro.plate("genes", self.num_genes, dim = -1):
-                    A = pyro.sample("A", dist.Exponential(self.scale_A))
+            if self.num_patterns > 0:
+                with pyro.plate("patterns", self.num_patterns, dim = -2):
+                    with pyro.plate("genes", self.num_genes, dim = -1):
+                        A = pyro.sample("A", dist.Exponential(self.scale_A))
+            else:
+                A = torch.zeros((0, self.num_genes), device=self.device, dtype=default_dtype)
             self.A = A
 
             # Nested plates for pixel-wise independence
@@ -315,7 +334,10 @@ class Exponential_SSFixedGenes(Exponential_base):
             else:
                 self.P = self._to_storage(P)
 
-            A_total = torch.cat((self.fixed_A.T, A), dim=0)
+            if self.num_patterns > 0:
+                A_total = torch.cat((self.fixed_A.T, A), dim=0)
+            else:
+                A_total = self.fixed_A.T
             self.A_total = A_total # save P_total
 
             # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
@@ -370,9 +392,12 @@ class Exponential_SSFixedGenes(Exponential_base):
 
         # Minibatch path
         # Nested plates for pixel-wise independence
-        with pyro.plate("patterns", self.num_patterns, dim = -2):
-            with pyro.plate("genes", self.num_genes, dim = -1):
-                A = pyro.sample("A", dist.Exponential(self.scale_A))
+        if self.num_patterns > 0:
+            with pyro.plate("patterns", self.num_patterns, dim = -2):
+                with pyro.plate("genes", self.num_genes, dim = -1):
+                    A = pyro.sample("A", dist.Exponential(self.scale_A))
+        else:
+            A = torch.zeros((0, self.num_genes), device=self.device, dtype=default_dtype)
         self.A = A
 
         sample_plate = pyro.plate("samples", self.num_samples, dim=-2, subsample_size=self.batch_size)
@@ -391,7 +416,10 @@ class Exponential_SSFixedGenes(Exponential_base):
             batch_idx_store = self._to_storage_idx(batch_idx)
             self.P[batch_idx_store] = self._to_storage(P)
 
-            A_total = torch.cat((self.fixed_A.T, A), dim=0)
+            if self.num_patterns > 0:
+                A_total = torch.cat((self.fixed_A.T, A), dim=0)
+            else:
+                A_total = self.fixed_A.T
             self.A_total = A_total # save P_total
 
             # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
@@ -467,11 +495,22 @@ class Exponential_SSFixedSamples(Exponential_base):
                 #scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu'),
-                batch_size=None
+                batch_size=None,
+                param_P=False
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device, batch_size) 
+        super().__init__(
+            num_samples,
+            num_genes,
+            num_patterns,
+            use_chisq,
+            use_pois,
+            NB_probs,
+            device,
+            batch_size,
+            param_P,
+        )
 
         ## This is the same as unsupervised but with a set of fixed P and A extended by this amount ##
 
@@ -492,7 +531,10 @@ class Exponential_SSFixedSamples(Exponential_base):
 
         #### Fixed patterns are samples x patterns ####
         fixed_device = self.device if self.batch_size is None else torch.device('cpu')
-        self.fixed_P = torch.tensor(fixed_patterns, device=fixed_device, dtype=default_dtype) # tensor, not updatable
+        if torch.is_tensor(fixed_patterns):
+            self.fixed_P = fixed_patterns.detach().clone().to(fixed_device, dtype=default_dtype)
+        else:
+            self.fixed_P = torch.tensor(fixed_patterns, device=fixed_device, dtype=default_dtype) # tensor, not updatable
 
     def forward(self, D, U):
 

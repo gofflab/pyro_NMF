@@ -22,10 +22,68 @@ import scanpy as sc
 import seaborn as sns
 import pyro
 import pyro.optim
+import pyro.distributions as dist
 import torch
 from pyro.infer.autoguide import AutoNormal
+import math
 
 default_dtype = torch.float32
+
+
+def _param_AP_guide(model):
+    def guide(D, U):
+        num_samples = model.num_samples
+        if hasattr(model, "fixed_P"):
+            num_A = model.num_fixed_patterns + model.num_patterns
+        else:
+            num_A = model.num_patterns
+        if hasattr(model, "fixed_A"):
+            num_P = model.num_fixed_patterns + model.num_patterns
+        else:
+            num_P = model.num_patterns
+
+        loc_A = pyro.param(
+            "q_loc_A",
+            torch.zeros(num_A, model.num_genes, device=model.device, dtype=default_dtype),
+        )
+        scale_A = pyro.param(
+            "q_scale_A",
+            torch.full((num_A, model.num_genes), 0.1, device=model.device, dtype=default_dtype),
+            constraint=dist.constraints.positive,
+        )
+        with pyro.plate("patterns", num_A, dim=-2):
+            with pyro.plate("genes", model.num_genes, dim=-1):
+                pyro.sample("A", dist.LogNormal(loc_A, scale_A))
+
+        storage_device = getattr(model, "storage_device", model.device)
+        loc_full = pyro.param(
+            "q_loc_P",
+            torch.zeros(num_samples, num_P, device=storage_device, dtype=default_dtype),
+        )
+        scale_full = pyro.param(
+            "q_scale_P",
+            torch.full((num_samples, num_P), 0.1, device=storage_device, dtype=default_dtype),
+            constraint=dist.constraints.positive,
+        )
+
+        if model.batch_size is None or model.batch_size >= num_samples:
+            sample_plate = pyro.plate("samples", num_samples, dim=-2)
+        else:
+            sample_plate = pyro.plate("samples", num_samples, dim=-2, subsample_size=model.batch_size)
+
+        with sample_plate as batch_idx:
+            idx_store = batch_idx
+            if storage_device != batch_idx.device:
+                idx_store = batch_idx.to(storage_device)
+            loc_b = loc_full.index_select(0, idx_store)
+            scale_b = scale_full.index_select(0, idx_store)
+            if loc_b.device != model.device:
+                loc_b = loc_b.to(model.device)
+                scale_b = scale_b.to(model.device)
+            with pyro.plate("patterns_P", num_P, dim=-1):
+                pyro.sample("P", dist.LogNormal(loc_b, scale_b))
+
+    return guide
 
 def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
     """
@@ -105,7 +163,7 @@ def prepare_tensors(data, device=None, keep_on_cpu=False):
 
 def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None,
                              fixed_patterns=None, model_type='gamma_unsupervised',
-                             supervision_type=None, batch_size=None):
+                             supervision_type=None, batch_size=None, lr=0.1, clip_norm=None, param_P=False):
     """
     Setup the NMF model and optimizer.
     
@@ -152,20 +210,31 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     elif model_type == 'exponential_unsupervised':
         model = Exponential_base(
             D.shape[0], D.shape[1], num_patterns, 
-            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device, batch_size=batch_size
+            use_chisq=use_chisq,
+            use_pois=use_pois,
+            NB_probs=NB_probs,
+            device=device,
+            batch_size=batch_size,
+            param_P=param_P,
         )
     elif model_type == 'exponential_supervised':
         if supervision_type == 'fixed_genes':
             model = Exponential_SSFixedGenes(
                 D.shape[0], D.shape[1], num_patterns, 
                 fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
-                NB_probs=NB_probs, device=device, batch_size=batch_size
+                NB_probs=NB_probs,
+                device=device,
+                batch_size=batch_size,
+                param_P=param_P,
             )
         elif supervision_type == 'fixed_samples':
             model = Exponential_SSFixedSamples(
                 D.shape[0], D.shape[1], num_patterns, 
                 fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
-                NB_probs=NB_probs, device=device, batch_size=batch_size
+                NB_probs=NB_probs,
+                device=device,
+                batch_size=batch_size,
+                param_P=param_P,
             )
         else:
             raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
@@ -173,8 +242,14 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
         raise ValueError("model_type must be 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', or 'exponential_supervised'")
     
     # Setup guide and optimizer
-    guide = AutoNormal(model)
-    optimizer = pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})
+    if param_P and model_type.startswith("exponential"):
+        guide = _param_AP_guide(model)
+    else:
+        guide = AutoNormal(model)
+    if clip_norm is not None:
+        optimizer = pyro.optim.ClippedAdam({"lr": lr, "eps": 1e-08, "clip_norm": clip_norm})
+    else:
+        optimizer = pyro.optim.Adam({"lr": lr, "eps": 1e-08})
     loss_fn = pyro.infer.Trace_ELBO()
     
     svi = pyro.infer.SVI(model=model, guide=guide, optim=optimizer, loss=loss_fn)
@@ -183,7 +258,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
 
 
 def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None, 
-                      spatial=False, coords=None, plot_dims=None):
+                      spatial=False, coords=None, plot_dims=None, tb_max_points=5000):
     """
     Run the inference loop with optional tensorboard logging.
     
@@ -228,7 +303,7 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
             print(f"Iteration {step}, ELBO loss: {loss}")
         
         if writer is not None:
-            _log_tensorboard_metrics(writer, model, step, loss, spatial, coords, plot_dims)
+            _log_tensorboard_metrics(writer, model, step, loss, spatial, coords, plot_dims, tb_max_points)
     
     end_time = datetime.now()
     runtime = round((end_time - start_time).total_seconds())
@@ -237,7 +312,7 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
     return losses, steps, runtime, writer
 
 
-def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None):
+def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None, tb_max_points=5000):
     """
     Log metrics to tensorboard.
     
@@ -261,13 +336,35 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
     writer.flush()
     
     if step % 50 == 0:
-        if spatial and coords is not None and plot_dims is not None:
+        if spatial and coords is not None:
             store = pyro.get_param_store()
-            # Plot loc_P if available
-            if 'loc_P' in store:
+            if plot_dims is None:
+                plot_dims = _infer_plot_dims(model, store)
+            if plot_dims is None:
+                return
+
+            max_points = tb_max_points
+            idx = None
+            if max_points is not None and max_points > 0 and coords.shape[0] > max_points:
+                rng = np.random.default_rng(0)
+                idx = rng.choice(coords.shape[0], size=max_points, replace=False)
+            coords_plot = coords if idx is None else coords[idx]
+            point_size = _auto_point_size(coords_plot.shape[0])
+
+            # Plot loc_P if available (gamma) or q_loc_P (exponential param_P)
+            if 'loc_P' in store or 'q_loc_P' in store:
                 try:
-                    locP = pyro.param("loc_P").detach().cpu().numpy()
-                    plot_grid(locP, coords, plot_dims[0], plot_dims[1], savename=None)
+                    if 'loc_P' in store:
+                        locP = pyro.param("loc_P").detach()
+                    else:
+                        q_loc = pyro.param("q_loc_P").detach()
+                        q_scale = pyro.param("q_scale_P").detach()
+                        locP = torch.exp(q_loc + 0.5 * torch.square(q_scale))
+                    if idx is not None:
+                        idx_t = torch.as_tensor(idx, device=locP.device)
+                        locP = locP.index_select(0, idx_t)
+                    locP = locP.cpu().numpy()
+                    plot_grid(locP, coords_plot, plot_dims[0], plot_dims[1], size=point_size, savename=None)
                     writer.add_figure("loc_P", plt.gcf(), step)
                 except Exception:
                     pass
@@ -275,16 +372,27 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             # Plot current sampled P if available
             if hasattr(model, "P"):
                 try:
-                    plot_grid(model.P.detach().cpu().numpy(), coords, plot_dims[0], plot_dims[1], savename=None)
+                    P = model.P.detach()
+                    if idx is not None:
+                        idx_t = torch.as_tensor(idx, device=P.device)
+                        P = P.index_select(0, idx_t)
+                    P = P.cpu().numpy()
+                    plot_grid(P, coords_plot, plot_dims[0], plot_dims[1], size=point_size, savename=None)
                     writer.add_figure("current sampled P", plt.gcf(), step)
                 except Exception:
                     pass
 
         # Histograms of parameters
         store = pyro.get_param_store()
-        if 'loc_P' in store:
+        if 'loc_P' in store or 'q_loc_P' in store:
             plt.figure()
-            plt.hist(pyro.param("loc_P").detach().cpu().numpy().flatten(), bins=30)
+            if 'loc_P' in store:
+                vals = pyro.param("loc_P").detach().cpu().numpy().flatten()
+            else:
+                q_loc = pyro.param("q_loc_P").detach()
+                q_scale = pyro.param("q_scale_P").detach()
+                vals = torch.exp(q_loc + 0.5 * torch.square(q_scale)).cpu().numpy().flatten()
+            plt.hist(vals, bins=30)
             writer.add_figure("loc_P_hist", plt.gcf(), step)
         if 'loc_A' in store:
             plt.figure()
@@ -305,6 +413,28 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             D_reconstructed = model.D_reconstructed.detach().cpu().numpy()
             plt.hist(D_reconstructed.flatten(), bins=30)
             writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
+
+
+def _auto_point_size(num_points, min_size=0.2, max_size=4.0):
+    if num_points <= 0:
+        return 1.0
+    size = 4000.0 / float(num_points)
+    return float(min(max_size, max(min_size, size)))
+
+
+def _infer_plot_dims(model, store):
+    num_patterns = None
+    if hasattr(model, "P") and model.P is not None:
+        num_patterns = int(model.P.shape[1])
+    elif "loc_P" in store:
+        num_patterns = int(pyro.param("loc_P").shape[1])
+    elif hasattr(model, "A") and model.A is not None:
+        num_patterns = int(model.A.shape[0])
+    if not num_patterns or num_patterns <= 0:
+        return None
+    cols = math.ceil(math.sqrt(num_patterns))
+    rows = math.ceil(num_patterns / cols)
+    return (rows, cols)
 
 def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
     """
@@ -513,7 +643,9 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
 
 
 def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-                        model_type, use_tensorboard_id=None, writer=None, batch_size=None):
+                        model_type, use_tensorboard_id=None, writer=None, batch_size=None,
+                        lr=None, clip_norm=None, tb_max_points=None, post_full_P_steps=None,
+                        param_P=None):
     """
     Create settings dictionary for saving.
     
@@ -543,6 +675,16 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
     }
     if batch_size is not None:
         settings['batch_size'] = str(batch_size)
+    if lr is not None:
+        settings['lr'] = str(lr)
+    if clip_norm is not None:
+        settings['clip_norm'] = str(clip_norm)
+    if tb_max_points is not None:
+        settings['tb_max_points'] = str(tb_max_points)
+    if post_full_P_steps is not None:
+        settings['post_full_P_steps'] = str(post_full_P_steps)
+    if param_P is not None:
+        settings['param_P'] = str(param_P)
     
     if use_tensorboard_id is not None and writer is not None:
         settings['tensorboard_identifier'] = str(writer.log_dir)
@@ -553,7 +695,9 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
 
 def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, 
                         use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, 
-                        plot_dims=None, scale=None, model_family='gamma', batch_size=None):
+                        plot_dims=None, scale=None, model_family='gamma', batch_size=None,
+                        lr=0.1, clip_norm=None, tb_max_points=5000, post_full_P_steps=0,
+                        param_P=False):
     """
     Run unsupervised NMF analysis.
     
@@ -585,32 +729,155 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     
     model_type = f'{model_family}_unsupervised'
     model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, model_type=model_type, batch_size=batch_size
+        D,
+        num_patterns,
+        scale,
+        NB_probs,
+        use_chisq,
+        use_pois,
+        device,
+        model_type=model_type,
+        batch_size=batch_size,
+        lr=lr,
+        clip_norm=clip_norm,
+        param_P=param_P,
     )
     print(f'Plotting with spatial coordinates: {spatial}')
     
     losses, steps, runtime, writer = run_inference_loop(
-        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
+        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims, tb_max_points
     )
-    
+
+    if param_P and model_family == "exponential":
+        store = pyro.get_param_store()
+        if "q_loc_P" in store and "q_scale_P" in store:
+            q_loc = pyro.param("q_loc_P").detach()
+            q_scale = pyro.param("q_scale_P").detach()
+            mean_P = torch.exp(q_loc + 0.5 * torch.square(q_scale))
+            storage_device = getattr(model, "storage_device", mean_P.device)
+            if mean_P.device != storage_device:
+                mean_P = mean_P.to(storage_device)
+            model.P = mean_P
+            model.best_P = mean_P
+
     settings = create_settings_dict(
-        num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        model_type, use_tensorboard_id, writer, batch_size
+        num_patterns,
+        num_steps,
+        device,
+        NB_probs,
+        use_chisq,
+        scale,
+        model_type,
+        use_tensorboard_id,
+        writer,
+        batch_size,
+        lr=lr,
+        clip_norm=clip_norm,
+        tb_max_points=tb_max_points,
+        post_full_P_steps=post_full_P_steps,
+        param_P=param_P,
     )
     
     result_anndata = data.copy()
     result_anndata = save_results_to_anndata(
         result_anndata, model, losses, steps, runtime, scale, settings, num_learned_patterns=num_patterns, supervised=None
     )
-    
+
+    if (
+        post_full_P_steps
+        and not param_P
+        and model_family == "exponential"
+        and batch_size is not None
+        and batch_size < data.shape[0]
+    ):
+        pattern_names = None
+        if "best_P" in result_anndata.obsm:
+            pattern_names = list(result_anndata.obsm["best_P"].columns)
+        elif "last_P" in result_anndata.obsm:
+            pattern_names = list(result_anndata.obsm["last_P"].columns)
+        if pattern_names is None:
+            pattern_names = [f"Pattern_{i+1}" for i in range(num_patterns)]
+
+        best_A = model.best_A.detach().cpu().numpy()
+        pyro.clear_param_store()
+        post_model = _post_infer_full_P(
+            data=data,
+            fixed_A=best_A,
+            num_steps=post_full_P_steps,
+            device=device,
+            NB_probs=NB_probs,
+            use_chisq=use_chisq,
+            use_pois=use_pois,
+            lr=lr,
+            clip_norm=clip_norm,
+        )
+        if post_model is not None and hasattr(post_model, "best_P"):
+            post_best_P = pd.DataFrame(
+                post_model.best_P.detach().cpu().numpy(),
+                index=result_anndata.obs.index,
+                columns=pattern_names,
+            )
+            post_last_P = pd.DataFrame(
+                post_model.P.detach().cpu().numpy(),
+                index=result_anndata.obs.index,
+                columns=pattern_names,
+            )
+            result_anndata.obsm["post_best_P"] = post_best_P
+            result_anndata.obsm["post_last_P"] = post_last_P
+            result_anndata.obsm["best_P"] = post_best_P
+            result_anndata.obsm["last_P"] = post_last_P
+            result_anndata.uns["post_full_P"] = True
+            result_anndata.uns["post_full_P_steps"] = int(post_full_P_steps)
+
     pyro.clear_param_store()
     return result_anndata
+
+
+def _post_infer_full_P(data, fixed_A, num_steps, device=None, NB_probs=0.5,
+                      use_chisq=False, use_pois=False, lr=0.1, clip_norm=None):
+    if num_steps is None or num_steps <= 0:
+        return None
+    fixed_patterns = torch.tensor(fixed_A.T, dtype=default_dtype)
+    D, U, _, device = prepare_tensors(data, device, keep_on_cpu=False)
+    fixed_patterns = fixed_patterns.to(device)
+    model = Exponential_SSFixedGenes(
+        D.shape[0],
+        D.shape[1],
+        num_patterns=0,
+        fixed_patterns=fixed_patterns,
+        use_chisq=use_chisq,
+        use_pois=use_pois,
+        NB_probs=NB_probs,
+        device=device,
+        batch_size=None,
+    )
+    guide = AutoNormal(model)
+    if clip_norm is not None:
+        optimizer = pyro.optim.ClippedAdam({"lr": lr, "eps": 1e-08, "clip_norm": clip_norm})
+    else:
+        optimizer = pyro.optim.Adam({"lr": lr, "eps": 1e-08})
+    loss_fn = pyro.infer.Trace_ELBO()
+    svi = pyro.infer.SVI(model=model, guide=guide, optim=optimizer, loss=loss_fn)
+    run_inference_loop(
+        svi,
+        model,
+        D,
+        U,
+        num_steps=num_steps,
+        use_tensorboard_id=None,
+        spatial=False,
+        coords=None,
+        plot_dims=None,
+        tb_max_points=None,
+    )
+    return model
 
 
 def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, device=None, 
                       NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, 
                       spatial=False, plot_dims=None, scale=None, model_family='gamma',
-                      supervision_type='fixed_genes', batch_size=None):
+                      supervision_type='fixed_genes', batch_size=None,
+                      lr=0.1, clip_norm=None, tb_max_points=5000, param_P=False):
     """
     Run supervised NMF analysis with fixed patterns.
     
@@ -646,17 +913,58 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     
     model_type = f'{model_family}_supervised'
     model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, 
-        fixed_patterns_tensor, model_type, supervision_type, batch_size
+        D,
+        num_patterns,
+        scale,
+        NB_probs,
+        use_chisq,
+        use_pois,
+        device,
+        fixed_patterns_tensor,
+        model_type,
+        supervision_type,
+        batch_size,
+        lr=lr,
+        clip_norm=clip_norm,
+        param_P=param_P,
     )
     
     losses, steps, runtime, writer = run_inference_loop(
-        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
+        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims, tb_max_points
     )
+
+    if param_P and model_family == "exponential":
+        store = pyro.get_param_store()
+        if "q_loc_P" in store and "q_scale_P" in store:
+            q_loc = pyro.param("q_loc_P").detach()
+            q_scale = pyro.param("q_scale_P").detach()
+            mean_P = torch.exp(q_loc + 0.5 * torch.square(q_scale))
+            storage_device = getattr(model, "storage_device", mean_P.device)
+            if mean_P.device != storage_device:
+                mean_P = mean_P.to(storage_device)
+            model.P = mean_P
+            model.best_P = mean_P
+            if hasattr(model, "fixed_P"):
+                fixed_P = model.fixed_P
+                if fixed_P.device != storage_device:
+                    fixed_P = fixed_P.to(storage_device)
+                model.P_total = torch.cat((fixed_P, mean_P), dim=1)
     
     settings = create_settings_dict(
-        num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
-        model_type, use_tensorboard_id, writer, batch_size
+        num_patterns,
+        num_steps,
+        device,
+        NB_probs,
+        use_chisq,
+        scale,
+        model_type,
+        use_tensorboard_id,
+        writer,
+        batch_size,
+        lr=lr,
+        clip_norm=clip_norm,
+        tb_max_points=tb_max_points,
+        param_P=param_P,
     )
     
     result_anndata = data.copy()
