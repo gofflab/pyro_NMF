@@ -73,7 +73,7 @@ def plot_grid_noAlpha(patterns, coords, nrows, ncols, s=10, savename = None):
 
 
 
-def plot_results(adata, nrows, ncols, which='best_P', s=10, a=1, scale_alpha = False, scale_values =False, savename = None, title=None):
+def plot_results(adata, nrows, ncols, which='best_P', s=4, a=1, scale_alpha = False, scale_values =False, savename = None, title=None):
     patterns = adata.obsm[which]
     coords = adata.obsm['spatial']
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))

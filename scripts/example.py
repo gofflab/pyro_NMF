@@ -17,7 +17,7 @@ import gc
 
 #%% LOAD DATA
 data = ad.read_h5ad('/raid/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') 
-data = data[data.obsm['atlas']['Isocortex']]
+#data = data[data.obsm['atlas']['Isocortex']]
 coords = data.obs.loc[:,['x','y']] # shape: samples x 2
 coords['y'] = -1*coords['y'] # specific for this dataset
 data.obsm['spatial'] = coords.to_numpy() # expects coordinates in 'spatial' if using spatial NMF
@@ -39,8 +39,10 @@ gene_layers = pd.DataFrame(
 )
 
 outputDir = "/raid/kyla/projects/pyro_NMF/analyses/test"
+num_steps = 10000
+
+
 #%% RUN ALL VARIANTS
-num_steps = 1000
 
 ##### RUN 1, Unsupervised gamma #####    
 os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory for tensorboard logging
@@ -51,14 +53,14 @@ nmf_res = run_nmf_unsupervised(data, # data: Expects data in form of anndata
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_gamma_uns', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
                                model_family='gamma')
-nmf_res.write_h5ad(outputDir + '/unsupervised_gamma.h5ad')
+nmf_res.write_h5ad(outputDir + '/unsupervised_gamma_comparebatch.h5ad')
 
 pyro.clear_param_store() 
 del nmf_res
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
-
+#%%
 
 ##### RUN 2, Unsupervised exp #####    
 os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory for tensorboard logging
@@ -69,7 +71,7 @@ nmf_res = run_nmf_unsupervised(data, # data: Expects data in form of anndata
                                use_pois=False, use_chisq=False, # optional added loss terms
                                use_tensorboard_id='_test_exponential_uns', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
                                model_family='exponential')
-nmf_res.write_h5ad(outputDir + '/unsupervised_exponential.h5ad')
+nmf_res.write_h5ad(outputDir + '/unsupervised_exponential_comparebatch.h5ad')
 
 pyro.clear_param_store() 
 del nmf_res
@@ -77,6 +79,7 @@ gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
+#%%
 
 ##### RUN 3, SSg gamma #####    
 os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory for tensorboard logging

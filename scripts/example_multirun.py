@@ -16,7 +16,7 @@ from pyroNMF.run_inference import *
 
 #%% LOAD DATA
 data = ad.read_h5ad('/raid/kyla/data/Zhuang-ABCA-1-raw_1.058_wMeta_wAnnotations_KW.h5ad') 
-data = data[data.obsm['atlas']['Isocortex']]
+#data = data[data.obsm['atlas']['Isocortex']]
 coords = data.obs.loc[:,['x','y']] # shape: samples x 2
 coords['y'] = -1*coords['y'] # specific for this dataset
 data.obsm['spatial'] = coords.to_numpy() # expects coordinates in 'spatial' if using spatial NMF

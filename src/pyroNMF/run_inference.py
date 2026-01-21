@@ -253,7 +253,7 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
         writer.add_scalar("Poisson loss", float(getattr(model, "pois")), step)
     writer.flush()
     
-    if step % 50 == 0:
+    if step % 50 == 0 or step==1: # I want to see first sample too
         if spatial and coords is not None and plot_dims is not None:
             store = pyro.get_param_store()
             # Plot loc_P if available
