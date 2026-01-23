@@ -79,6 +79,9 @@ class Exponential_base(PyroModule):
 
         #### P parameter for Exponential to Populate P Matrix ####
         self.scale_P = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.positive)
+        self._pois_const_full = None
+        self._pois_const_per_sample = None
+        self._pois_const_shape = None
 
     def _to_storage(self, tensor):
         if tensor.device == self.storage_device:
@@ -107,6 +110,26 @@ class Exponential_base(PyroModule):
             + total_count * log1m_p
             + counts * log_p
         ).sum()
+
+    def _pois_log_prob(self, counts, mean):
+        mean = mean.clamp_min(torch.finfo(mean.dtype).eps)
+        return torch.sum(counts * torch.log(mean) - mean)
+
+    def _ensure_pois_const(self, D):
+        shape = tuple(D.shape)
+        if self._pois_const_full is not None and self._pois_const_shape == shape:
+            return
+        with torch.no_grad():
+            D_const = D.detach()
+            if D_const.device != self.storage_device:
+                D_const = D_const.to(self.storage_device)
+            if D_const.ndim <= 1:
+                per_sample = torch.lgamma(D_const + 1)
+            else:
+                per_sample = torch.lgamma(D_const + 1).sum(dim=1)
+            self._pois_const_per_sample = per_sample
+            self._pois_const_full = per_sample.sum()
+            self._pois_const_shape = shape
     def forward(self, D, U):
         self.iter += 1 # keep a running total of iterations
 
@@ -134,8 +157,16 @@ class Exponential_base(PyroModule):
             chi2 = torch.sum((D_reconstructed-D)**2/U**2)
             self.chi2  = chi2
             theta = self.D_reconstructed
-            poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-            self.pois  = poisL
+            poisL = self._pois_log_prob(D, theta)
+            self._ensure_pois_const(D)
+            pois_const_full = self._pois_const_full
+            if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
+                pois_const_full = pois_const_full.to(poisL.device)
+            if pois_const_full is not None:
+                poisL_full = poisL - pois_const_full
+            else:
+                poisL_full = poisL
+            self.pois = poisL_full
 
             if chi2 < self.best_chisq: # if this is a better chi squared, save it
                 self.best_chisq = chi2
@@ -151,10 +182,7 @@ class Exponential_base(PyroModule):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed
-                poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-                # Addition to Elbow Loss - should make this at least as large as Elbow
-                pyro.factor("pois.loss",10.*poisL)
+                pyro.factor("pois.loss", 10.0 * poisL_full)
 
             with torch.no_grad():
                 correction = P.max(axis=0).values
@@ -209,10 +237,24 @@ class Exponential_base(PyroModule):
             chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
             chi2_scaled = chi2 * batch_scale
             self.chi2  = chi2_scaled
-            theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
-            poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
-            poisL_scaled = poisL * batch_scale
-            self.pois  = poisL_scaled
+            theta = self.D_reconstructed
+            poisL = self._pois_log_prob(D_b, theta)
+            self._ensure_pois_const(D)
+            pois_const = None
+            if self._pois_const_per_sample is not None:
+                idx_store = self._to_storage_idx(batch_idx)
+                pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
+                if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
+                    pois_const = pois_const.to(poisL.device)
+                if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
+                    pois_const = pois_const.to(poisL.device)
+                if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
+                    pois_const = pois_const.to(poisL.device)
+            if pois_const is not None:
+                poisL_scaled = (poisL - pois_const) * batch_scale
+            else:
+                poisL_scaled = poisL * batch_scale
+            self.pois = poisL_scaled
 
             if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
                 self.best_chisq = chi2_scaled
@@ -229,11 +271,7 @@ class Exponential_base(PyroModule):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
-                poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
-                poisL_scaled = poisL * batch_scale
-                # Addition to Elbow Loss - should make this at least as large as Elbow
-                pyro.factor("pois.loss",10.*poisL_scaled)
+                pyro.factor("pois.loss", 10.0 * poisL_scaled)
      
             with torch.no_grad():
                 correction = P.max(axis=0).values
@@ -348,8 +386,16 @@ class Exponential_SSFixedGenes(Exponential_base):
             chi2 = torch.sum((D_reconstructed-D)**2/U**2)
             self.chi2  = chi2
             theta = self.D_reconstructed
-            poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-            self.pois  = poisL
+            poisL = self._pois_log_prob(D, theta)
+            self._ensure_pois_const(D)
+            pois_const_full = self._pois_const_full
+            if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
+                pois_const_full = pois_const_full.to(poisL.device)
+            if pois_const_full is not None:
+                poisL_full = poisL - pois_const_full
+            else:
+                poisL_full = poisL
+            self.pois = poisL_full
 
             if chi2 < self.best_chisq: # if this is a better chi squared, save it
                 self.best_chisq = chi2
@@ -365,10 +411,7 @@ class Exponential_SSFixedGenes(Exponential_base):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed
-                poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-                # Addition to Elbow Loss - should make this at least as large as Elbow
-                pyro.factor("pois.loss",10.*poisL)
+                pyro.factor("pois.loss", 10.0 * poisL_full)
             
             with torch.no_grad():
                 correction = P.max(axis=0).values
@@ -430,10 +473,18 @@ class Exponential_SSFixedGenes(Exponential_base):
             chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
             chi2_scaled = chi2 * batch_scale
             self.chi2  = chi2_scaled
-            theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
-            poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
-            poisL_scaled = poisL * batch_scale
-            self.pois  = poisL_scaled
+            theta = self.D_reconstructed
+            poisL = self._pois_log_prob(D_b, theta)
+            self._ensure_pois_const(D)
+            pois_const = None
+            if self._pois_const_per_sample is not None:
+                idx_store = self._to_storage_idx(batch_idx)
+                pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
+            if pois_const is not None:
+                poisL_scaled = (poisL - pois_const) * batch_scale
+            else:
+                poisL_scaled = poisL * batch_scale
+            self.pois = poisL_scaled
 
             if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
                 self.best_chisq = chi2_scaled
@@ -449,11 +500,7 @@ class Exponential_SSFixedGenes(Exponential_base):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
-                poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
-                poisL_scaled = poisL * batch_scale
-                # Addition to Elbow Loss - should make this at least as large as Elbow
-                pyro.factor("pois.loss",10.*poisL_scaled)
+                pyro.factor("pois.loss", 10.0 * poisL_scaled)
         
             with torch.no_grad():
                 correction = P.max(axis=0).values
@@ -571,8 +618,16 @@ class Exponential_SSFixedSamples(Exponential_base):
             chi2 = torch.sum((D_reconstructed-D)**2/U**2)
             self.chi2  = chi2
             theta = self.D_reconstructed
-            poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-            self.pois  = poisL
+            poisL = self._pois_log_prob(D, theta)
+            self._ensure_pois_const(D)
+            pois_const_full = self._pois_const_full
+            if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
+                pois_const_full = pois_const_full.to(poisL.device)
+            if pois_const_full is not None:
+                poisL_full = poisL - pois_const_full
+            else:
+                poisL_full = poisL
+            self.pois = poisL_full
 
             if chi2 < self.best_chisq: # if this is a better chi squared, save it
                 self.best_chisq = chi2
@@ -588,10 +643,7 @@ class Exponential_SSFixedSamples(Exponential_base):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed
-                poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-                # Addition to Elbow Loss - should make this at least as large as Elbow
-                pyro.factor("pois.loss",10.*poisL)
+                pyro.factor("pois.loss", 10.0 * poisL_full)
 
             with torch.no_grad():
                 correction = P_total.max(axis=0).values
@@ -650,10 +702,18 @@ class Exponential_SSFixedSamples(Exponential_base):
             chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
             chi2_scaled = chi2 * batch_scale
             self.chi2  = chi2_scaled
-            theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
-            poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
-            poisL_scaled = poisL * batch_scale
-            self.pois  = poisL_scaled
+            theta = self.D_reconstructed
+            poisL = self._pois_log_prob(D_b, theta)
+            self._ensure_pois_const(D)
+            pois_const = None
+            if self._pois_const_per_sample is not None:
+                idx_store = self._to_storage_idx(batch_idx)
+                pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
+            if pois_const is not None:
+                poisL_scaled = (poisL - pois_const) * batch_scale
+            else:
+                poisL_scaled = poisL * batch_scale
+            self.pois = poisL_scaled
 
             if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
                 self.best_chisq = chi2_scaled
@@ -669,11 +729,7 @@ class Exponential_SSFixedSamples(Exponential_base):
 
             if self.use_pois:
                 # Error Model Poisson
-                theta = self.D_reconstructed.clamp_min(torch.finfo(self.D_reconstructed.dtype).eps)
-                poisL = torch.sum(torch.multiply(D_b,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D_b+1))
-                poisL_scaled = poisL * batch_scale
-                # Addition to Elbow Loss - should make this at least as large as Elbow
-                pyro.factor("pois.loss",10.*poisL_scaled)
+                pyro.factor("pois.loss", 10.0 * poisL_scaled)
 
             with torch.no_grad():
                 correction = P_total.max(axis=0).values

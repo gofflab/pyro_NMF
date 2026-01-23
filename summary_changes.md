@@ -45,6 +45,9 @@ Key changes:
 - **Adaptive point size** to reduce overplotting.
 - **Auto grid sizing** when `plot_dims` is not provided.
 - TensorBoard P plots now use **`q_loc_P` mean** when `param_P=True` (or `loc_P` for gamma models).
+- **Embedding projector support**: final embeddings for samples (P) and genes (Aᵀ) are logged to TensorBoard, with AnnData `obs`/`var` metadata attached when available.
+- **Training diagnostics**: rolling loss stats, chi‑squared delta/ratio, parameter‑norm tracking, and reconstruction summary stats are logged.
+- **Benchmarking**: step time, throughput (samples/sec, elements/sec), and device memory usage (CUDA/MPS) are logged.
 
 ## 4) Post-hoc full-batch P inference (Option 3)
 **Files:** `src/pyroNMF/run_inference.py`

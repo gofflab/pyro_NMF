@@ -12,7 +12,9 @@ from pyroNMF.models.exp_pois_models import (
 )
 from pyroNMF.utils import detect_device, plot_grid, plot_grid_noAlpha
 from torch.utils.tensorboard import SummaryWriter
+from collections import deque
 import os
+import time
 from datetime import datetime
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -283,17 +285,21 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
     steps = []
     losses = []
     writer = None
+    loss_window = deque(maxlen=50)
+    prev_param_norms = {}
     
     if use_tensorboard_id is not None:
         print('Logging to Tensorboard')
         writer = SummaryWriter(comment=use_tensorboard_id)
     
     for step in range(1, num_steps + 1):
+        step_start = time.perf_counter()
         try:
             loss = svi.step(D, U)
         except ValueError as e:
             print(f"ValueError during iteration {step}: {e}")
             break
+        loss_window.append(float(loss))
         
         if step % 10 == 0:
             losses.append(loss)
@@ -303,7 +309,39 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
             print(f"Iteration {step}, ELBO loss: {loss}")
         
         if writer is not None:
-            _log_tensorboard_metrics(writer, model, step, loss, spatial, coords, plot_dims, tb_max_points)
+            if step % 10 == 0 and len(loss_window) > 1:
+                window_vals = np.array(loss_window, dtype=float)
+                writer.add_scalar("Loss/rolling_mean", window_vals.mean(), step)
+                writer.add_scalar("Loss/rolling_std", window_vals.std(ddof=0), step)
+            if step % 10 == 0:
+                step_time = time.perf_counter() - step_start
+                writer.add_scalar("Perf/step_time_sec", step_time, step)
+                try:
+                    n_samples = D.shape[0]
+                    writer.add_scalar("Perf/samples_per_sec", n_samples / max(step_time, 1e-9), step)
+                    if D.ndim >= 2:
+                        n_elems = float(D.shape[0] * D.shape[1])
+                        writer.add_scalar("Perf/elements_per_sec", n_elems / max(step_time, 1e-9), step)
+                    batch_size = getattr(model, "batch_size", None)
+                    if batch_size is None or batch_size <= 0:
+                        epoch_progress = float(step)
+                    else:
+                        epoch_progress = float(step) * float(batch_size) / float(n_samples)
+                    writer.add_scalar("Perf/epoch_progress", epoch_progress, step)
+                except Exception:
+                    pass
+            _log_tensorboard_metrics(
+                writer,
+                model,
+                step,
+                loss,
+                spatial,
+                coords,
+                plot_dims,
+                tb_max_points,
+                prev_param_norms,
+                D,
+            )
     
     end_time = datetime.now()
     runtime = round((end_time - start_time).total_seconds())
@@ -312,7 +350,8 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
     return losses, steps, runtime, writer
 
 
-def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None, tb_max_points=5000):
+def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None,
+                             tb_max_points=5000, prev_param_norms=None, D=None):
     """
     Log metrics to tensorboard.
     
@@ -324,6 +363,7 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
     - spatial: Whether to include spatial plots
     - coords: Spatial coordinates
     - plot_dims: Plotting dimensions
+    - D: Observed data tensor (samples x genes) for residual plots
     """
     writer.add_scalar("Loss/train", loss, step)
     if hasattr(model, "best_chisq"):
@@ -331,9 +371,49 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
         writer.add_scalar("Saved chi-squared iter", int(getattr(model, "best_chisq_iter", 0)), step)
     if hasattr(model, "chi2"):
         writer.add_scalar("Chi-squared", float(getattr(model, "chi2")), step)
+        if hasattr(model, "best_chisq"):
+            try:
+                best = float(getattr(model, "best_chisq", np.inf))
+                current = float(getattr(model, "chi2"))
+                if np.isfinite(best) and np.isfinite(current):
+                    writer.add_scalar("Chi-squared delta", current - best, step)
+                    if current != 0:
+                        writer.add_scalar("Chi-squared ratio", best / current, step)
+            except Exception:
+                pass
     if hasattr(model, "pois"):
         writer.add_scalar("Poisson loss", float(getattr(model, "pois")), step)
     writer.flush()
+
+    if step % 50 == 0:
+        store = pyro.get_param_store()
+        param_keys = [
+            "loc_A",
+            "loc_P",
+            "q_loc_A",
+            "q_loc_P",
+            "scale_A",
+            "scale_P",
+            "q_scale_A",
+            "q_scale_P",
+        ]
+        if prev_param_norms is None:
+            prev_param_norms = {}
+        for key in param_keys:
+            if key in store:
+                try:
+                    tensor = pyro.param(key).detach()
+                    norm = float(torch.linalg.norm(tensor).cpu())
+                    writer.add_scalar(f"ParamNorm/{key}", norm, step)
+                    if key in prev_param_norms:
+                        writer.add_scalar(
+                            f"ParamDeltaNorm/{key}",
+                            abs(norm - prev_param_norms[key]),
+                            step,
+                        )
+                    prev_param_norms[key] = norm
+                except Exception:
+                    pass
     
     if step % 50 == 0:
         if spatial and coords is not None:
@@ -407,12 +487,173 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             plt.hist(pyro.param("scale_P").detach().cpu().numpy().flatten(), bins=30)
             writer.add_figure("scale_P_hist", plt.gcf(), step)
 
-    if step % 100 == 0:
+    if step % 50 == 0:
         if hasattr(model, "D_reconstructed"):
             plt.figure()
             D_reconstructed = model.D_reconstructed.detach().cpu().numpy()
             plt.hist(D_reconstructed.flatten(), bins=30)
             writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
+            try:
+                writer.add_scalar("D_reconstructed_mean", float(D_reconstructed.mean()), step)
+                writer.add_scalar("D_reconstructed_std", float(D_reconstructed.std()), step)
+                writer.add_scalar("D_reconstructed_min", float(D_reconstructed.min()), step)
+                writer.add_scalar("D_reconstructed_max", float(D_reconstructed.max()), step)
+            except Exception:
+                pass
+            try:
+                D_tensor = model.D_reconstructed.detach()
+                D_obs = None
+                if D is not None and torch.is_tensor(D):
+                    D_obs = D.detach()
+                if D_tensor.ndim >= 2:
+                    if D_tensor.ndim > 2:
+                        D_flat = D_tensor.reshape(D_tensor.shape[0], -1)
+                    else:
+                        D_flat = D_tensor
+                    if D_obs is not None:
+                        if D_obs.ndim > 2:
+                            D_obs_flat = D_obs.reshape(D_obs.shape[0], -1)
+                        else:
+                            D_obs_flat = D_obs
+                    else:
+                        D_obs_flat = None
+                    max_points = tb_max_points
+                    if max_points is not None and max_points > 0 and D_flat.shape[1] > max_points:
+                        rng = np.random.default_rng(0)
+                        idx = rng.choice(D_flat.shape[1], size=max_points, replace=False)
+                        idx_t = torch.as_tensor(idx, device=D_flat.device)
+                        D_flat = D_flat.index_select(1, idx_t)
+                        if D_obs_flat is not None:
+                            idx_t_obs = idx_t
+                            if D_obs_flat.device != idx_t.device:
+                                idx_t_obs = idx_t.to(D_obs_flat.device)
+                            D_obs_flat = D_obs_flat.index_select(1, idx_t_obs)
+                    means = D_flat.mean(dim=0)
+                    vars_ = D_flat.var(dim=0, unbiased=False)
+                else:
+                    means = D_tensor
+                    vars_ = torch.zeros_like(means)
+                    D_obs_flat = D_obs
+
+                eps = torch.finfo(means.dtype).eps
+                cv2 = vars_ / means.clamp_min(eps) ** 2
+                mean_np = means.detach().cpu().numpy()
+                cv2_np = cv2.detach().cpu().numpy()
+                mask = np.isfinite(mean_np) & np.isfinite(cv2_np) & (mean_np > 0) & (cv2_np > 0)
+                mean_np = mean_np[mask]
+                cv2_np = cv2_np[mask]
+                if mean_np.size > 0:
+                    plt.figure()
+                    plt.scatter(mean_np, cv2_np, s=8, alpha=0.3, edgecolors="none")
+                    plt.xlabel("Mean")
+                    plt.ylabel("CV^2")
+                    plt.title("D_reconstructed mean vs CV^2")
+                    plt.xscale("log")
+                    plt.yscale("log")
+                    writer.add_figure("D_reconstructed_mean_cov", plt.gcf(), step)
+
+                if D_obs_flat is not None:
+                    try:
+                        exp_mean = means.detach()
+                        obs_mean = D_obs_flat.mean(dim=0).detach()
+                        exp_np = exp_mean.cpu().numpy()
+                        obs_np = obs_mean.cpu().numpy()
+                        mask = np.isfinite(exp_np) & np.isfinite(obs_np)
+                        exp_np = exp_np[mask]
+                        obs_np = obs_np[mask]
+                        if exp_np.size > 0:
+                            residuals = obs_np - exp_np
+                            fig, axes = plt.subplots(1, 2, figsize=(8, 3.2))
+                            axes[0].scatter(exp_np, obs_np, s=8, alpha=0.3, edgecolors="none")
+                            min_v = float(min(exp_np.min(), obs_np.min()))
+                            max_v = float(max(exp_np.max(), obs_np.max()))
+                            axes[0].plot([min_v, max_v], [min_v, max_v], color="gray", linewidth=1.0)
+                            axes[0].set_xlabel("Expected (mean of D_reconstructed)")
+                            axes[0].set_ylabel("Observed (mean of D)")
+                            axes[0].set_title("Expected vs observed")
+                            axes[1].scatter(exp_np, residuals, s=8, alpha=0.3, edgecolors="none")
+                            axes[1].axhline(0.0, color="gray", linewidth=1.0)
+                            axes[1].set_xlabel("Expected (mean of D_reconstructed)")
+                            axes[1].set_ylabel("Observed - expected")
+                            axes[1].set_title("Per-gene residuals")
+                            fig.suptitle("Per-gene residuals (expected vs observed)", y=1.02)
+                            fig.tight_layout()
+                            writer.add_figure("D_reconstructed_mean_cov/expected_vs_observed", fig, step)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        try:
+            mib = 1024.0 * 1024.0
+            if hasattr(torch.backends, "cuda") and torch.cuda.is_available():
+                writer.add_scalar("Mem/cuda_allocated_MiB", float(torch.cuda.memory_allocated()) / mib, step)
+                writer.add_scalar("Mem/cuda_reserved_MiB", float(torch.cuda.memory_reserved()) / mib, step)
+                writer.add_scalar("Mem/cuda_max_allocated_MiB", float(torch.cuda.max_memory_allocated()) / mib, step)
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                writer.add_scalar("Mem/mps_allocated_MiB", float(torch.mps.current_allocated_memory()) / mib, step)
+                writer.add_scalar("Mem/mps_driver_allocated_MiB", float(torch.mps.driver_allocated_memory()) / mib, step)
+        except Exception:
+            pass
+
+
+def _log_final_embeddings(writer, model, tb_max_points=5000, obs_metadata=None, var_metadata=None):
+    if writer is None:
+        return
+    rng = np.random.default_rng(0)
+
+    def _maybe_subsample(arr, max_points):
+        if max_points is None or max_points <= 0 or arr.shape[0] <= max_points:
+            return arr, None
+        idx = rng.choice(arr.shape[0], size=max_points, replace=False)
+        return arr[idx], idx
+
+    def _prepare_metadata(df, idx):
+        if df is None:
+            return None, None
+        if not hasattr(df, "shape") or df.shape[0] == 0 or df.shape[1] == 0:
+            return None, None
+        try:
+            if idx is None:
+                meta = df
+            else:
+                meta = df.iloc[idx]
+            meta = meta.astype(str)
+            return meta.values.tolist(), list(meta.columns)
+        except Exception:
+            return None, None
+
+    P = None
+    if hasattr(model, "P_total"):
+        P = getattr(model, "P_total", None)
+    if P is None and hasattr(model, "P"):
+        P = getattr(model, "P", None)
+
+    if P is not None and torch.is_tensor(P):
+        try:
+            P_cpu = P.detach().cpu().numpy()
+            P_cpu, idx = _maybe_subsample(P_cpu, tb_max_points)
+            meta, meta_header = _prepare_metadata(obs_metadata, idx)
+            writer.add_embedding(P_cpu, metadata=meta, metadata_header=meta_header, tag="Embedding/P_samples")
+        except Exception:
+            pass
+
+    A = None
+    if hasattr(model, "A_total"):
+        A = getattr(model, "A_total", None)
+    if A is None and hasattr(model, "A"):
+        A = getattr(model, "A", None)
+
+    if A is not None and torch.is_tensor(A):
+        try:
+            A_cpu = A.detach().cpu().numpy()
+            if A_cpu.ndim == 2:
+                # Embed genes by using A^T (genes x patterns)
+                A_embed = A_cpu.T
+                A_embed, idx = _maybe_subsample(A_embed, tb_max_points)
+                meta, meta_header = _prepare_metadata(var_metadata, idx)
+                writer.add_embedding(A_embed, metadata=meta, metadata_header=meta_header, tag="Embedding/A_genes")
+        except Exception:
+            pass
 
 
 def _auto_point_size(num_points, min_size=0.2, max_size=4.0):
@@ -760,6 +1001,9 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
             model.P = mean_P
             model.best_P = mean_P
 
+    if writer is not None:
+        _log_final_embeddings(writer, model, tb_max_points, obs_metadata=data.obs, var_metadata=data.var)
+
     settings = create_settings_dict(
         num_patterns,
         num_steps,
@@ -949,6 +1193,9 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
                 if fixed_P.device != storage_device:
                     fixed_P = fixed_P.to(storage_device)
                 model.P_total = torch.cat((fixed_P, mean_P), dim=1)
+
+    if writer is not None:
+        _log_final_embeddings(writer, model, tb_max_points, obs_metadata=data.obs, var_metadata=data.var)
     
     settings = create_settings_dict(
         num_patterns,
