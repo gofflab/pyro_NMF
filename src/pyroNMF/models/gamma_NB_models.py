@@ -84,7 +84,7 @@ class Gamma_NegBinomial_base(PyroModule):
         self.scale = scale
 
 
-    def forward(self, D, U):
+    def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -129,15 +129,15 @@ class Gamma_NegBinomial_base(PyroModule):
             poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
-     
-        with torch.no_grad():
-            correction = P.max(axis=0).values
-            Pn = P / correction
-            An = A * correction.unsqueeze(1)
-            self.sum_A += An
-            self.sum_P += Pn
-            self.sum_A2 += torch.square(An)
-            self.sum_P2 += torch.square(Pn) 
+        if samp:
+            with torch.no_grad():
+                correction = P.max(axis=0).values
+                Pn = P / correction
+                An = A * correction.unsqueeze(1)
+                self.sum_A += An
+                self.sum_P += Pn
+                self.sum_A2 += torch.square(An)
+                self.sum_P2 += torch.square(Pn) 
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
@@ -182,7 +182,7 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
         #### Fixed patterns are samples x patterns ####
         self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
 
-    def forward(self, D, U):
+    def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -231,14 +231,16 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
         
-        with torch.no_grad():
-            correction = P.max(axis=0).values
-            Pn = P / correction
-            An = A_total * correction.unsqueeze(1)
-            self.sum_A += An
-            self.sum_P += Pn
-            self.sum_A2 += torch.square(An)
-            self.sum_P2 += torch.square(Pn)
+        if samp:
+            with torch.no_grad():
+                correction = P.max(axis=0).values
+                Pn = P / correction
+                An = A * correction.unsqueeze(1)
+                self.sum_A += An
+                self.sum_P += Pn
+                self.sum_A2 += torch.square(An)
+                self.sum_P2 += torch.square(Pn) 
+
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
@@ -286,7 +288,7 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
         #### Fixed patterns are samples x patterns ####
         self.fixed_P = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
 
-    def forward(self, D, U):
+    def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -335,14 +337,15 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
 
-        with torch.no_grad():
-            correction = P_total.max(axis=0).values
-            Pn = P_total / correction
-            An = A * correction.unsqueeze(1)
-            self.sum_A += An
-            self.sum_P += Pn
-            self.sum_A2 += torch.square(An)
-            self.sum_P2 += torch.square(Pn)
+        if samp:
+            with torch.no_grad():
+                correction = P_total.max(axis=0).values
+                Pn = P_total / correction
+                An = A * correction.unsqueeze(1)
+                self.sum_A += An
+                self.sum_P += Pn
+                self.sum_A2 += torch.square(An)
+                self.sum_P2 += torch.square(Pn)
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
 

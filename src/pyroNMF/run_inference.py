@@ -1,3 +1,4 @@
+from pyroNMF.models.exp_pois_models_noNB import ExponentialPoisson_base
 import torch
 
 from pyroNMF.models.gamma_NB_models import (
@@ -119,6 +120,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     - guide: AutoNormal guide
     - svi: SVI optimizer
     """
+    print(model_type)
     # Instantiate the model
     if model_type == 'gamma_unsupervised':
         model = Gamma_NegBinomial_base(
@@ -147,6 +149,11 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
             D.shape[0], D.shape[1], num_patterns, 
             use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
         )
+    elif model_type == 'exponentialPois_unsupervised':
+        model = ExponentialPoisson_base(
+            D.shape[0], D.shape[1], num_patterns, 
+            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
+        )
     elif model_type == 'exponential_supervised':
         if supervision_type == 'fixed_genes':
             model = Exponential_SSFixedGenes(
@@ -165,6 +172,12 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     else:
         raise ValueError("model_type must be 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', or 'exponential_supervised'")
     
+    #pyro.render_model(model, model_args=(D,D), 
+    #                render_params=True,
+    #                render_distributions=True,
+    #                #render_deterministic=True,
+    #                filename=f"{model_type}.pdf")
+
     # Setup guide and optimizer
     guide = AutoNormal(model)
     optimizer = pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})
@@ -175,7 +188,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     return model, guide, svi
 
 
-def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None, 
+def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tensorboard_id=None, 
                       spatial=False, coords=None, plot_dims=None):
     """
     Run the inference loop with optional tensorboard logging.
@@ -206,9 +219,12 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
         print('Logging to Tensorboard')
         writer = SummaryWriter(comment=use_tensorboard_id)
     
-    for step in range(1, num_steps + 1):
+    for step in range(1, num_burnin + num_sample_steps + 1):
         try:
-            loss = svi.step(D, U)
+            if step <= num_burnin+1:
+                loss = svi.step(D, U, samp=False)
+            else:
+                loss = svi.step(D, U, samp=True)
         except ValueError as e:
             print(f"ValueError during iteration {step}: {e}")
             break
@@ -299,7 +315,7 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             plt.hist(D_reconstructed.flatten(), bins=30)
             writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
 
-def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None, num_learned_patterns=None):
+def _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_names=None, num_learned_patterns=None):
     """
     Auto-detect and save all model parameters from model and param store.
     
@@ -504,6 +520,73 @@ def _detect_and_save_parameters(result_anndata, model, fixed_pattern_names=None,
     print("Saving last_A_scaled in anndata.varm['last_A_scaled']")
 
 
+    #### Save sum and sum of squares for samples
+    num_samples = int(settings['num_sample_steps'])
+
+    if hasattr(model, "sum_P"):
+        sum_P = pd.DataFrame(model.sum_P.detach().cpu().numpy())
+        mean_P = sum_P / num_samples
+        if sum_P.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            sum_P.columns = full_pattern_names
+            mean_P.columns = full_pattern_names
+        else:
+            sum_P.columns = learned_pattern_names
+            mean_P.columns = learned_pattern_names
+        sum_P.index = result_anndata.obs.index
+        mean_P.index = result_anndata.obs.index
+        result_anndata.obsm["mean_P"] = mean_P
+        result_anndata.obsm["sum_P"] = sum_P
+        print("Saving sum_P and mean_P in anndata.obsm['sum_P'] and anndata.obsm['mean_P']")
+
+    if hasattr(model, "sum_A"):
+        sum_A = pd.DataFrame(model.sum_A.detach().cpu().numpy().T)
+        mean_A = sum_A / num_samples
+        if sum_A.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            sum_A.columns = full_pattern_names
+            mean_A.columns = full_pattern_names
+        else:
+            sum_A.columns = learned_pattern_names
+            mean_A.columns = learned_pattern_names
+        sum_A.index = result_anndata.var.index
+        mean_A.index = result_anndata.var.index
+        result_anndata.varm["mean_A"] = mean_A
+        result_anndata.varm["sum_A"] = sum_A
+        print("Saving sum_A and mean_A in anndata.varm['sum_A'] and anndata.varm['mean_A']")
+
+    if hasattr(model, "sum_P2"):
+        sum_P2 = pd.DataFrame(model.sum_P2.detach().cpu().numpy())
+        #(self.sum_P2 - (self.sum_P ** 2) / n) / (n - 1)
+        var_P = sum_P2.to_numpy() - (sum_P.to_numpy() ** 2) / num_samples
+        var_P = pd.DataFrame(var_P / (num_samples - 1))
+        if sum_P2.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            sum_P2.columns = full_pattern_names
+            var_P.columns = full_pattern_names
+        else:
+            sum_P2.columns = learned_pattern_names
+            var_P.columns = learned_pattern_names
+        sum_P2.index = result_anndata.obs.index
+        var_P.index = result_anndata.obs.index
+        result_anndata.obsm["var_P"] = var_P
+        result_anndata.obsm["sum_P2"] = sum_P2
+        print("Saving sum_P2 in anndata.obsm['sum_P2']")
+
+    if hasattr(model, "sum_A2"):
+        sum_A2 = pd.DataFrame(model.sum_A2.detach().cpu().numpy().T)
+        #(self.sum_A2 - (self.sum_A ** 2) / n) / (n - 1)
+        var_A = sum_A2.to_numpy() - (sum_A.to_numpy() ** 2) / num_samples
+        var_A = pd.DataFrame(var_A / (num_samples - 1))
+        if sum_A2.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            sum_A2.columns = full_pattern_names
+            var_A.columns = full_pattern_names
+        else:
+            sum_A2.columns = learned_pattern_names
+            var_A.columns = learned_pattern_names
+        sum_A2.index = result_anndata.var.index
+        var_A.index = result_anndata.var.index
+        result_anndata.varm["var_A"] = var_A
+        result_anndata.varm["sum_A2"] = sum_A2
+        print("Saving sum_A2 in anndata.varm['sum_A2']")
+
 
 def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, 
                            fixed_pattern_names=None, num_learned_patterns=None, supervised=None):
@@ -524,8 +607,8 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
     Returns:
     - result_anndata: AnnData object with results
     """
-    # Save P parameters
-    _detect_and_save_parameters(result_anndata, model, fixed_pattern_names, num_learned_patterns)
+    # Save parameters
+    _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_names, num_learned_patterns)
     
     # Save metadata
     result_anndata.uns["runtime (seconds)"] = runtime
@@ -544,14 +627,15 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
     return result_anndata
 
 
-def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
+def create_settings_dict(num_patterns, num_total_steps, num_sample_steps, device, NB_probs, use_chisq, scale, 
                         model_type, use_tensorboard_id=None, writer=None):
     """
     Create settings dictionary for saving.
     
     Parameters:
     - num_patterns: Number of patterns
-    - num_steps: Number of training steps
+    - num_total_steps: Number of total training steps
+    - num_sample_steps: Number of sampling steps
     - device: Device used
     - NB_probs: Negative binomial probability
     - use_chisq: Whether chi-squared loss was used
@@ -565,7 +649,8 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
     """
     settings = {
         'num_patterns': str(num_patterns),
-        'num_steps': str(num_steps),
+        'num_total_steps': str(num_total_steps),
+        'num_sample_steps': str(num_sample_steps),
         'device': str(device),
         'NB_probs': str(NB_probs),
         'use_chisq': str(use_chisq),
@@ -580,7 +665,7 @@ def create_settings_dict(num_patterns, num_steps, device, NB_probs, use_chisq, s
     return settings
 
 
-def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_probs=0.5, 
+def run_nmf_unsupervised(data, num_patterns, num_burnin=1000, num_sample_steps=20000, device=None, NB_probs=0.5, 
                         use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, 
                         plot_dims=None, scale=None, model_family='gamma'):
     """
@@ -589,7 +674,8 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     Parameters:
     - data: AnnData object with raw counts in X
     - num_patterns: Number of patterns to extract
-    - num_steps: Number of optimization steps
+    - num_burnin: Number of burn-in steps
+    - num_sample_steps: Number of sampling steps
     - device: Device to run on ('cpu', 'cuda', 'mps', or None for auto)
     - NB_probs: Negative binomial probability
     - use_chisq: Whether to use chi-squared loss
@@ -613,11 +699,11 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     print(f'Plotting with spatial coordinates: {spatial}')
     
     losses, steps, runtime, writer = run_inference_loop(
-        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
+        svi, model, D, U, num_burnin, num_sample_steps, use_tensorboard_id, spatial, coords, plot_dims
     )
     
     settings = create_settings_dict(
-        num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
+        num_patterns, num_sample_steps+num_burnin, num_sample_steps, device, NB_probs, use_chisq, scale,
         model_type, use_tensorboard_id, writer
     )
     
@@ -630,7 +716,7 @@ def run_nmf_unsupervised(data, num_patterns, num_steps=20000, device=None, NB_pr
     return result_anndata
 
 
-def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, device=None, 
+def run_nmf_supervised(data, num_patterns, fixed_patterns, num_burnin=1000, num_sample_steps=20000, device=None, 
                       NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, 
                       spatial=False, plot_dims=None, scale=None, model_family='gamma',
                       supervision_type='fixed_genes'):
@@ -641,7 +727,8 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     - data: AnnData object with raw counts in X
     - num_patterns: Number of additional patterns to learn
     - fixed_patterns: DataFrame with fixed patterns
-    - num_steps: Number of optimization steps
+    - num_burnin: Number of burn-in steps
+    - num_sample_steps: Number of sampling steps
     - device: Device to run on ('cpu', 'cuda', 'mps', or None for auto)
     - NB_probs: Negative binomial probability
     - use_chisq: Whether to use chi-squared loss
@@ -668,11 +755,11 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_steps=20000, devi
     )
     
     losses, steps, runtime, writer = run_inference_loop(
-        svi, model, D, U, num_steps, use_tensorboard_id, spatial, coords, plot_dims
+        svi, model, D, U, num_burnin, num_sample_steps, use_tensorboard_id, spatial, coords, plot_dims
     )
     
     settings = create_settings_dict(
-        num_patterns, num_steps, device, NB_probs, use_chisq, scale, 
+        num_patterns, num_sample_steps+num_burnin, num_sample_steps, device, NB_probs, use_chisq, scale,
         model_type, use_tensorboard_id, writer
     )
     
