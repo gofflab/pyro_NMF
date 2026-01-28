@@ -186,6 +186,36 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     - guide: AutoNormal guide
     - svi: SVI optimizer
     """
+    def _init_exponential_rates(model, D_tensor, patterns, fixed=None):
+        if not (hasattr(model, "scale_A") and hasattr(model, "scale_P")):
+            return
+        try:
+            D_work = D_tensor.detach()
+            if D_work.device.type == "mps":
+                D_work = D_work.to("cpu")
+            flat = D_work.reshape(-1)
+            nonzero = flat[flat > 0]
+            if nonzero.numel() == 0:
+                return
+            mean_val = float(nonzero.mean().cpu())
+        except Exception:
+            return
+        if not np.isfinite(mean_val) or mean_val <= 0:
+            return
+        total_patterns = int(patterns)
+        if fixed is not None and hasattr(fixed, "shape") and len(fixed.shape) >= 2:
+            try:
+                total_patterns += int(fixed.shape[1])
+            except Exception:
+                pass
+        total_patterns = max(total_patterns, 1)
+        rate = math.sqrt(total_patterns / max(mean_val, 1e-8))
+        rate_tensor = torch.tensor(rate, device=model.device, dtype=default_dtype)
+        with torch.no_grad():
+            model.scale_A.copy_(rate_tensor)
+            model.scale_P.copy_(rate_tensor)
+        model.init_rate = rate
+
     # Instantiate the model
     if model_type == 'gamma_unsupervised':
         model = Gamma_NegBinomial_base(
@@ -242,6 +272,9 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
             raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
     else:
         raise ValueError("model_type must be 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', or 'exponential_supervised'")
+
+    if model_type.startswith("exponential"):
+        _init_exponential_rates(model, D, num_patterns, fixed_patterns)
     
     # Setup guide and optimizer
     if param_P and model_type.startswith("exponential"):
@@ -291,6 +324,9 @@ def run_inference_loop(svi, model, D, U, num_steps, use_tensorboard_id=None,
     if use_tensorboard_id is not None:
         print('Logging to Tensorboard')
         writer = SummaryWriter(comment=use_tensorboard_id)
+    metrics_interval = 50 if writer is not None else None
+    if hasattr(model, "metrics_interval") and getattr(model, "metrics_interval") is None:
+        model.metrics_interval = metrics_interval
     
     for step in range(1, num_steps + 1):
         step_start = time.perf_counter()
@@ -366,10 +402,13 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
     - D: Observed data tensor (samples x genes) for residual plots
     """
     writer.add_scalar("Loss/train", loss, step)
+    interval = getattr(model, "metrics_interval", None)
+    on_interval = interval is not None and interval > 0 and step % interval == 0
+
     if hasattr(model, "best_chisq"):
         writer.add_scalar("Best chi-squared", float(getattr(model, "best_chisq", np.inf)), step)
         writer.add_scalar("Saved chi-squared iter", int(getattr(model, "best_chisq_iter", 0)), step)
-    if hasattr(model, "chi2"):
+    if hasattr(model, "chi2") and (getattr(model, "use_chisq", False) or on_interval):
         writer.add_scalar("Chi-squared", float(getattr(model, "chi2")), step)
         if hasattr(model, "best_chisq"):
             try:
@@ -381,7 +420,7 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
                         writer.add_scalar("Chi-squared ratio", best / current, step)
             except Exception:
                 pass
-    if hasattr(model, "pois"):
+    if hasattr(model, "pois") and (getattr(model, "use_pois", False) or on_interval):
         writer.add_scalar("Poisson loss", float(getattr(model, "pois")), step)
     writer.flush()
 

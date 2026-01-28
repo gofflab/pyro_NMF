@@ -82,6 +82,7 @@ class Exponential_base(PyroModule):
         self._pois_const_full = None
         self._pois_const_per_sample = None
         self._pois_const_shape = None
+        self.metrics_interval = None
 
     def _to_storage(self, tensor):
         if tensor.device == self.storage_device:
@@ -130,8 +131,16 @@ class Exponential_base(PyroModule):
             self._pois_const_per_sample = per_sample
             self._pois_const_full = per_sample.sum()
             self._pois_const_shape = shape
+
+    def _metric_flags(self):
+        interval = self.metrics_interval
+        on_interval = interval is not None and interval > 0 and self.iter % interval == 0
+        compute_chi2 = self.use_chisq or on_interval
+        compute_pois = self.use_pois or on_interval
+        return compute_chi2, compute_pois
     def forward(self, D, U):
         self.iter += 1 # keep a running total of iterations
+        compute_chi2, compute_pois = self._metric_flags()
 
         if self.batch_size is None or self.batch_size >= self.num_samples:
             # Full-batch path (original behavior)
@@ -153,28 +162,28 @@ class Exponential_base(PyroModule):
             D_reconstructed = torch.matmul(P, A)  # (samples x genes)
             self.D_reconstructed = D_reconstructed # save D_reconstructed to model
 
-            # Calculate chi squared
-            chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-            self.chi2  = chi2
-            theta = self.D_reconstructed
-            poisL = self._pois_log_prob(D, theta)
-            self._ensure_pois_const(D)
-            pois_const_full = self._pois_const_full
-            if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
-                pois_const_full = pois_const_full.to(poisL.device)
-            if pois_const_full is not None:
-                poisL_full = poisL - pois_const_full
-            else:
-                poisL_full = poisL
-            self.pois = poisL_full
-
-            if chi2 < self.best_chisq: # if this is a better chi squared, save it
-                self.best_chisq = chi2
-                self.best_chisq_iter = self.iter
-                self.best_A = self._to_storage(A)
-                self.best_P = self._to_storage(P)
-                self.best_scaleA = self.scale_A
-                self.best_scaleP = self.scale_P
+            if compute_chi2:
+                chi2 = torch.sum((D_reconstructed-D)**2/U**2)
+                self.chi2 = chi2
+                if chi2 < self.best_chisq: # if this is a better chi squared, save it
+                    self.best_chisq = chi2
+                    self.best_chisq_iter = self.iter
+                    self.best_A = self._to_storage(A)
+                    self.best_P = self._to_storage(P)
+                    self.best_scaleA = self.scale_A
+                    self.best_scaleP = self.scale_P
+            if compute_pois:
+                theta = self.D_reconstructed
+                poisL = self._pois_log_prob(D, theta)
+                self._ensure_pois_const(D)
+                pois_const_full = self._pois_const_full
+                if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
+                    pois_const_full = pois_const_full.to(poisL.device)
+                if pois_const_full is not None:
+                    poisL_full = poisL - pois_const_full
+                else:
+                    poisL_full = poisL
+                self.pois = poisL_full
 
             # Include chi squared loss in the model
             if self.use_chisq:
@@ -233,36 +242,32 @@ class Exponential_base(PyroModule):
             D_reconstructed = torch.matmul(P, A)  # (samples x genes)
             self.D_reconstructed = D_reconstructed # save D_reconstructed to model
 
-            # Calculate chi squared
-            chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
-            chi2_scaled = chi2 * batch_scale
-            self.chi2  = chi2_scaled
-            theta = self.D_reconstructed
-            poisL = self._pois_log_prob(D_b, theta)
-            self._ensure_pois_const(D)
-            pois_const = None
-            if self._pois_const_per_sample is not None:
-                idx_store = self._to_storage_idx(batch_idx)
-                pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
-                if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
-                    pois_const = pois_const.to(poisL.device)
-                if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
-                    pois_const = pois_const.to(poisL.device)
-                if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
-                    pois_const = pois_const.to(poisL.device)
-            if pois_const is not None:
-                poisL_scaled = (poisL - pois_const) * batch_scale
-            else:
-                poisL_scaled = poisL * batch_scale
-            self.pois = poisL_scaled
-
-            if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
-                self.best_chisq = chi2_scaled
-                self.best_chisq_iter = self.iter
-                self.best_A = self._to_storage(A)
-                self.best_P[batch_idx_store] = self._to_storage(P)
-                self.best_scaleA = self.scale_A
-                self.best_scaleP = self.scale_P
+            if compute_chi2:
+                chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
+                chi2_scaled = chi2 * batch_scale
+                self.chi2 = chi2_scaled
+                if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
+                    self.best_chisq = chi2_scaled
+                    self.best_chisq_iter = self.iter
+                    self.best_A = self._to_storage(A)
+                    self.best_P[batch_idx_store] = self._to_storage(P)
+                    self.best_scaleA = self.scale_A
+                    self.best_scaleP = self.scale_P
+            if compute_pois:
+                theta = self.D_reconstructed
+                poisL = self._pois_log_prob(D_b, theta)
+                self._ensure_pois_const(D)
+                pois_const = None
+                if self._pois_const_per_sample is not None:
+                    idx_store = self._to_storage_idx(batch_idx)
+                    pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
+                    if torch.is_tensor(pois_const) and pois_const.device != poisL.device:
+                        pois_const = pois_const.to(poisL.device)
+                if pois_const is not None:
+                    poisL_scaled = (poisL - pois_const) * batch_scale
+                else:
+                    poisL_scaled = poisL * batch_scale
+                self.pois = poisL_scaled
 
             
             # Include chi squared loss in the model
@@ -352,6 +357,7 @@ class Exponential_SSFixedGenes(Exponential_base):
     def forward(self, D, U):
 
         self.iter += 1 # keep a running total of iterations
+        compute_chi2, compute_pois = self._metric_flags()
 
         if self.batch_size is None or self.batch_size >= self.num_samples:
             # Full-batch path (original behavior)
@@ -382,28 +388,28 @@ class Exponential_SSFixedGenes(Exponential_base):
             D_reconstructed = torch.matmul(P, A_total)  # (samples x genes)
             self.D_reconstructed = D_reconstructed # save D_reconstructed
             
-            # Calculate chi squared
-            chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-            self.chi2  = chi2
-            theta = self.D_reconstructed
-            poisL = self._pois_log_prob(D, theta)
-            self._ensure_pois_const(D)
-            pois_const_full = self._pois_const_full
-            if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
-                pois_const_full = pois_const_full.to(poisL.device)
-            if pois_const_full is not None:
-                poisL_full = poisL - pois_const_full
-            else:
-                poisL_full = poisL
-            self.pois = poisL_full
-
-            if chi2 < self.best_chisq: # if this is a better chi squared, save it
-                self.best_chisq = chi2
-                self.best_chisq_iter = self.iter
-                self.best_A = self._to_storage(A)
-                self.best_P = self._to_storage(P)
-                self.best_scaleA = self.scale_A
-                self.best_scaleP = self.scale_P
+            if compute_chi2:
+                chi2 = torch.sum((D_reconstructed-D)**2/U**2)
+                self.chi2 = chi2
+                if chi2 < self.best_chisq: # if this is a better chi squared, save it
+                    self.best_chisq = chi2
+                    self.best_chisq_iter = self.iter
+                    self.best_A = self._to_storage(A)
+                    self.best_P = self._to_storage(P)
+                    self.best_scaleA = self.scale_A
+                    self.best_scaleP = self.scale_P
+            if compute_pois:
+                theta = self.D_reconstructed
+                poisL = self._pois_log_prob(D, theta)
+                self._ensure_pois_const(D)
+                pois_const_full = self._pois_const_full
+                if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
+                    pois_const_full = pois_const_full.to(poisL.device)
+                if pois_const_full is not None:
+                    poisL_full = poisL - pois_const_full
+                else:
+                    poisL_full = poisL
+                self.pois = poisL_full
 
             # Include chi squared loss in the model
             if self.use_chisq:
@@ -469,30 +475,30 @@ class Exponential_SSFixedGenes(Exponential_base):
             D_reconstructed = torch.matmul(P, A_total)  # (samples x genes)
             self.D_reconstructed = D_reconstructed # save D_reconstructed
         
-            # Calculate chi squared
-            chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
-            chi2_scaled = chi2 * batch_scale
-            self.chi2  = chi2_scaled
-            theta = self.D_reconstructed
-            poisL = self._pois_log_prob(D_b, theta)
-            self._ensure_pois_const(D)
-            pois_const = None
-            if self._pois_const_per_sample is not None:
-                idx_store = self._to_storage_idx(batch_idx)
-                pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
-            if pois_const is not None:
-                poisL_scaled = (poisL - pois_const) * batch_scale
-            else:
-                poisL_scaled = poisL * batch_scale
-            self.pois = poisL_scaled
-
-            if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
-                self.best_chisq = chi2_scaled
-                self.best_chisq_iter = self.iter
-                self.best_A = self._to_storage(A)
-                self.best_P[batch_idx_store] = self._to_storage(P)
-                self.best_scaleA = self.scale_A
-                self.best_scaleP = self.scale_P
+            if compute_chi2:
+                chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
+                chi2_scaled = chi2 * batch_scale
+                self.chi2 = chi2_scaled
+                if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
+                    self.best_chisq = chi2_scaled
+                    self.best_chisq_iter = self.iter
+                    self.best_A = self._to_storage(A)
+                    self.best_P[batch_idx_store] = self._to_storage(P)
+                    self.best_scaleA = self.scale_A
+                    self.best_scaleP = self.scale_P
+            if compute_pois:
+                theta = self.D_reconstructed
+                poisL = self._pois_log_prob(D_b, theta)
+                self._ensure_pois_const(D)
+                pois_const = None
+                if self._pois_const_per_sample is not None:
+                    idx_store = self._to_storage_idx(batch_idx)
+                    pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
+                if pois_const is not None:
+                    poisL_scaled = (poisL - pois_const) * batch_scale
+                else:
+                    poisL_scaled = poisL * batch_scale
+                self.pois = poisL_scaled
 
             # Include chi squared loss in the model
             if self.use_chisq:
@@ -586,6 +592,7 @@ class Exponential_SSFixedSamples(Exponential_base):
     def forward(self, D, U):
 
         self.iter += 1 # keep a running total of iterations
+        compute_chi2, compute_pois = self._metric_flags()
 
         if self.batch_size is None or self.batch_size >= self.num_samples:
             # Full-batch path (original behavior)
@@ -614,28 +621,28 @@ class Exponential_SSFixedSamples(Exponential_base):
             D_reconstructed = torch.matmul(P_total, A)  # (samples x genes)
             self.D_reconstructed = D_reconstructed # save D_reconstructed
             
-            # Calculate chi squared
-            chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-            self.chi2  = chi2
-            theta = self.D_reconstructed
-            poisL = self._pois_log_prob(D, theta)
-            self._ensure_pois_const(D)
-            pois_const_full = self._pois_const_full
-            if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
-                pois_const_full = pois_const_full.to(poisL.device)
-            if pois_const_full is not None:
-                poisL_full = poisL - pois_const_full
-            else:
-                poisL_full = poisL
-            self.pois = poisL_full
-
-            if chi2 < self.best_chisq: # if this is a better chi squared, save it
-                self.best_chisq = chi2
-                self.best_chisq_iter = self.iter
-                self.best_A = self._to_storage(A)
-                self.best_P = self._to_storage(P)
-                self.best_scaleA = self.scale_A
-                self.best_scaleP = self.scale_P
+            if compute_chi2:
+                chi2 = torch.sum((D_reconstructed-D)**2/U**2)
+                self.chi2 = chi2
+                if chi2 < self.best_chisq: # if this is a better chi squared, save it
+                    self.best_chisq = chi2
+                    self.best_chisq_iter = self.iter
+                    self.best_A = self._to_storage(A)
+                    self.best_P = self._to_storage(P)
+                    self.best_scaleA = self.scale_A
+                    self.best_scaleP = self.scale_P
+            if compute_pois:
+                theta = self.D_reconstructed
+                poisL = self._pois_log_prob(D, theta)
+                self._ensure_pois_const(D)
+                pois_const_full = self._pois_const_full
+                if pois_const_full is not None and torch.is_tensor(pois_const_full) and pois_const_full.device != poisL.device:
+                    pois_const_full = pois_const_full.to(poisL.device)
+                if pois_const_full is not None:
+                    poisL_full = poisL - pois_const_full
+                else:
+                    poisL_full = poisL
+                self.pois = poisL_full
 
             # Include chi squared loss in the model
             if self.use_chisq:
@@ -698,30 +705,30 @@ class Exponential_SSFixedSamples(Exponential_base):
             D_reconstructed = torch.matmul(P_total, A)  # (samples x genes)
             self.D_reconstructed = D_reconstructed # save D_reconstructed
         
-            # Calculate chi squared
-            chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
-            chi2_scaled = chi2 * batch_scale
-            self.chi2  = chi2_scaled
-            theta = self.D_reconstructed
-            poisL = self._pois_log_prob(D_b, theta)
-            self._ensure_pois_const(D)
-            pois_const = None
-            if self._pois_const_per_sample is not None:
-                idx_store = self._to_storage_idx(batch_idx)
-                pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
-            if pois_const is not None:
-                poisL_scaled = (poisL - pois_const) * batch_scale
-            else:
-                poisL_scaled = poisL * batch_scale
-            self.pois = poisL_scaled
-
-            if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
-                self.best_chisq = chi2_scaled
-                self.best_chisq_iter = self.iter
-                self.best_A = self._to_storage(A)
-                self.best_P[batch_idx_store] = self._to_storage(P)
-                self.best_scaleA = self.scale_A
-                self.best_scaleP = self.scale_P
+            if compute_chi2:
+                chi2 = torch.sum((D_reconstructed-D_b)**2/U_b**2)
+                chi2_scaled = chi2 * batch_scale
+                self.chi2 = chi2_scaled
+                if chi2_scaled < self.best_chisq: # if this is a better chi squared, save it
+                    self.best_chisq = chi2_scaled
+                    self.best_chisq_iter = self.iter
+                    self.best_A = self._to_storage(A)
+                    self.best_P[batch_idx_store] = self._to_storage(P)
+                    self.best_scaleA = self.scale_A
+                    self.best_scaleP = self.scale_P
+            if compute_pois:
+                theta = self.D_reconstructed
+                poisL = self._pois_log_prob(D_b, theta)
+                self._ensure_pois_const(D)
+                pois_const = None
+                if self._pois_const_per_sample is not None:
+                    idx_store = self._to_storage_idx(batch_idx)
+                    pois_const = self._pois_const_per_sample.index_select(0, idx_store).sum()
+                if pois_const is not None:
+                    poisL_scaled = (poisL - pois_const) * batch_scale
+                else:
+                    poisL_scaled = poisL * batch_scale
+                self.pois = poisL_scaled
 
             # Include chi squared loss in the model
             if self.use_chisq:

@@ -48,6 +48,17 @@ Key changes:
 - **Embedding projector support**: final embeddings for samples (P) and genes (Aᵀ) are logged to TensorBoard, with AnnData `obs`/`var` metadata attached when available.
 - **Training diagnostics**: rolling loss stats, chi‑squared delta/ratio, parameter‑norm tracking, and reconstruction summary stats are logged.
 - **Benchmarking**: step time, throughput (samples/sec, elements/sec), and device memory usage (CUDA/MPS) are logged.
+- **Mean–CV² plots** for `D_reconstructed` (log‑log scatter) with **per‑gene expected vs observed residuals** added; logged every 50 steps, with NB fit line removed.
+- **Chi‑squared / Poisson scalars** are now only emitted when those metrics are computed (use_* or logging interval).
+
+## 3.5) Chi‑squared / Poisson metric gating
+**Files:** `src/pyroNMF/models/exp_pois_models.py`, `src/pyroNMF/run_inference.py`
+
+- **Separate compute flags** for chi‑squared and Poisson log‑likelihood:
+  - Each is computed **every step only when its loss term is active** (`use_chisq` / `use_pois`).
+  - Otherwise, each metric is computed only on the **logging interval**.
+- **Rationale:** reduces per‑step overhead in Exponential models when a metric is only used for logging, while preserving identical training behavior when the metric contributes to the loss.
+- **`metrics_interval`** is set from the TensorBoard interval (default 50) unless explicitly overridden on the model.
 
 ## 4) Post-hoc full-batch P inference (Option 3)
 **Files:** `src/pyroNMF/run_inference.py`
