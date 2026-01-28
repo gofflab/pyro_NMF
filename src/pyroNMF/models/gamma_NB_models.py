@@ -75,11 +75,11 @@ class Gamma_NegBinomial_base(PyroModule):
         ## Set up the pyro parameters
         #### Matrix A is patterns x genes ####
         #### Initialize randomly, but with positive constraint ####
-        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
+        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.nonnegative)
         
         #### Matrix P is samples x patterns ####
         #### Initialize randomly, but with positive constraint ####
-        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype),constraint=dist.constraints.positive)
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype),constraint=dist.constraints.nonnegative)
         #### Single fixed scale parameter for gammas ####
         self.scale = scale
 
@@ -170,7 +170,7 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
 
 
         #### Matrix P is samples x patterns (supervised+unsupervised) ####
-        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)        
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype), constraint=dist.constraints.nonnegative)        
         self.best_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
         self.sum_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
         self.sum_P2 = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
@@ -275,7 +275,7 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
 
 
         #### Matrix A is patterns (supervised+unsupervised) x genes ####
-        self.loc_A = PyroParam(torch.rand(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)        
+        self.loc_A = PyroParam(torch.rand(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.nonnegative)        
         self.best_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.best_locA = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.sum_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)

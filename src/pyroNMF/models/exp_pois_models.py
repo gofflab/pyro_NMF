@@ -69,12 +69,10 @@ class Exponential_base(PyroModule):
 
         ## Set up the pyro parameters
         #### A parameter for Exponential to Populate A Matrix ####
-        self.scale_A = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.positive)
+        self.scale_A = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.nonnegative)
 
         #### P parameter for Exponential to Populate P Matrix ####
-        self.scale_P = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.positive)
-
-
+        self.scale_P = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.nonnegative)
     def forward(self, D, U, samp=False):
         self.iter += 1 # keep a running total of iterations
 
