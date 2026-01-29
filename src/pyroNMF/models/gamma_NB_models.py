@@ -235,7 +235,7 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
             with torch.no_grad():
                 correction = P.max(axis=0).values
                 Pn = P / correction
-                An = A * correction.unsqueeze(1)
+                An = A_total * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
