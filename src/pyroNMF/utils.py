@@ -93,6 +93,7 @@ def plot_results(adata, nrows, ncols, which='best_P', s=4, a=1, scale_alpha = Fa
                 p = axes[r,c].scatter(x, y, c=patterns.iloc[:,i], s=s, alpha=a, vmin=pattern_min, vmax=pattern_max, cmap='viridis',edgecolors='none')
                 axes[r,c].set_yticklabels([])
                 axes[r,c].set_xticklabels([])
+                axes[r,c].set_title(patterns.columns[i])
                 fig.colorbar(p, ax=axes[r,c])
 
                 #axes[r,c].set_title(patterns.columns[i])

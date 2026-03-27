@@ -39,7 +39,7 @@ gene_layers = pd.DataFrame(
 )
 
 outputDir = "/raid/kyla/projects/pyro_NMF/analyses/test"
-num_steps = 5000
+num_steps = 1000
 
 
 #%% RUN ALL VARIANTS
@@ -48,13 +48,13 @@ num_steps = 5000
 os.chdir('/raid/kyla/projects/pyro_NMF/analyses/test') # set working directory for tensorboard logging
 nmf_res = run_nmf_unsupervised(data, # data: Expects data in form of anndata 
                                20, # num_patterns: Number of patterns is the number of latent features to learn
-                               num_burnin=5000,
+                               num_burnin=num_steps,
                                num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
                                spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                                use_pois=False, use_chisq=False, # optional added loss terms
-                               use_tensorboard_id='_test_gamma_uns', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
-                               model_family='gamma')
-nmf_res.write_h5ad(outputDir + '/unsupervised_gamma_comparebatch.h5ad')
+                               use_tensorboard_id='testoptim_adamW', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
+                               model_family='gamma', optimizer=pyro.optim.AdamW({"lr": 0.1, "eps": 1e-08}))
+nmf_res.write_h5ad(outputDir + '/testoptim_adamW.h5ad')
 
 pyro.clear_param_store() 
 del nmf_res

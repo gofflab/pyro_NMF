@@ -72,6 +72,15 @@ class Gamma_NegBinomial_base(PyroModule):
         self.A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
         self.P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
 
+        self.markers_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Ascaled = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Asoftmax = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
         ## Set up the pyro parameters
         #### Matrix A is patterns x genes ####
         #### Initialize randomly, but with positive constraint ####
@@ -131,13 +140,42 @@ class Gamma_NegBinomial_base(PyroModule):
             pyro.factor("pois.loss",10.*poisL)
         if samp:
             with torch.no_grad():
-                correction = P.max(axis=0).values
+                #correction = P.max(axis=0).values
+                correction = P.sum(axis=0)
                 Pn = P / correction
                 An = A * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn) 
+
+                max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(A)
+                A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
+                self.markers_A += A_binary
+
+                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(P)
+                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
+                self.markers_P += P_binary
+
+                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
+                A_binaryscaled = torch.zeros_like(An)
+                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
+                self.markers_Ascaled += A_binaryscaled
+
+                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
+                P_binaryscaled = torch.zeros_like(Pn)
+                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
+                self.markers_Pscaled += P_binaryscaled
+
+                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
+                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
+
+                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
+                self.markers_Asoftmax += (An / sumPerGene)
+       
+
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
@@ -181,6 +219,17 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
 
         #### Fixed patterns are samples x patterns ####
         self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
+
+
+        self.markers_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Ascaled = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
 
     def forward(self, D, U, samp=False):
 
@@ -233,7 +282,9 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
         
         if samp:
             with torch.no_grad():
-                correction = P.max(axis=0).values
+                #correction = P.max(axis=0).values
+                correction = P.sum(axis=0)
+
                 Pn = P / correction
                 An = A_total * correction.unsqueeze(1)
                 self.sum_A += An
@@ -241,6 +292,32 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn) 
 
+                max_pat_per_gene = A_total.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(A_total)
+                A_binary[max_pat_per_gene, torch.arange(A_total.shape[1])] = 1
+                self.markers_A += A_binary
+
+                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(P)
+                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
+                self.markers_P += P_binary
+
+                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
+                A_binaryscaled = torch.zeros_like(An)
+                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
+                self.markers_Ascaled += A_binaryscaled
+
+                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
+                P_binaryscaled = torch.zeros_like(Pn)
+                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
+                self.markers_Pscaled += P_binaryscaled
+
+                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
+                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
+
+                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
+                self.markers_Asoftmax += (An / sumPerGene)
+       
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
@@ -287,6 +364,17 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
 
         #### Fixed patterns are samples x patterns ####
         self.fixed_P = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
+
+
+        self.markers_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Ascaled = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
 
     def forward(self, D, U, samp=False):
 
@@ -339,13 +427,45 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
 
         if samp:
             with torch.no_grad():
-                correction = P_total.max(axis=0).values
+                #correction = P_total.max(axis=0).values
+                correction = P_total.sum(axis=0)
+
                 Pn = P_total / correction
                 An = A * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn)
+
+
+                max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(A)
+                A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
+                self.markers_A += A_binary
+
+                max_pat_per_samp = P_total.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(P_total)
+                P_binary[torch.arange(P_total.shape[0]), max_pat_per_samp] = 1
+                self.markers_P += P_binary
+
+                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
+                A_binaryscaled = torch.zeros_like(An)
+                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
+                self.markers_Ascaled += A_binaryscaled
+
+                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
+                P_binaryscaled = torch.zeros_like(Pn)
+                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
+                self.markers_Pscaled += P_binaryscaled
+
+                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
+                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
+
+                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
+                self.markers_Asoftmax += (An / sumPerGene)
+       
+
+
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
 

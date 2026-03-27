@@ -100,7 +100,7 @@ def prepare_tensors(data, device=None):
 
 def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None,
                              fixed_patterns=None, model_type='gamma_unsupervised',
-                             supervision_type=None):
+                             supervision_type=None, optimizer=pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})):
     """
     Setup the NMF model and optimizer.
     
@@ -180,13 +180,84 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
 
     # Setup guide and optimizer
     guide = AutoNormal(model)
-    optimizer = pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})
+    #optimizer = pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})
     loss_fn = pyro.infer.Trace_ELBO()
     
     svi = pyro.infer.SVI(model=model, guide=guide, optim=optimizer, loss=loss_fn)
     
     return model, guide, svi
 
+def log_adam_state_all(writer, svi, step, tag_prefix="OptimAdam", log_every=1):
+    if writer is None:
+        return
+    if (step % log_every) != 0:
+        return
+
+    state = svi.optim.get_state()
+
+    for name, d in state.items():
+        if "param_groups" not in d or "state" not in d:
+            continue
+        if len(d["param_groups"]) == 0 or len(d["state"]) == 0:
+            continue
+
+        g0 = d["param_groups"][0]
+        if "lr" not in g0 or "betas" not in g0 or "eps" not in g0:
+            continue
+
+        lr = float(g0["lr"])
+        beta1, beta2 = g0["betas"]
+        eps = float(g0["eps"])
+
+        safe_name = str(name).replace(":", "_").replace(" ", "_").replace("/", "_")
+        base = f"{tag_prefix}/{safe_name}"
+
+        for param_id, st in d["state"].items():
+            if "step" not in st:
+                continue
+            t = int(st["step"].item())
+
+            # Bias corrections
+            bc1 = 1.0 - (beta1 ** t)
+            bc2 = 1.0 - (beta2 ** t)
+
+            sub = base if len(d["state"]) == 1 else f"{base}/param{param_id}"
+
+            # --- Moment tensors ---
+            m = st.get("exp_avg", None)
+            v = st.get("exp_avg_sq", None)
+
+            if m is not None:
+                m2_mean = (m * m).mean()
+                writer.add_scalar(f"{sub}/m_rms", float(torch.sqrt(m2_mean).item()), step)
+                writer.add_scalar(f"{sub}/m_norm", float(torch.linalg.vector_norm(m).item()), step)
+
+            if v is not None:
+                v2_mean = (v * v).mean()
+                writer.add_scalar(f"{sub}/v_rms", float(torch.sqrt(v2_mean).item()), step)
+                writer.add_scalar(f"{sub}/v_norm", float(torch.linalg.vector_norm(v).item()), step)
+
+                # --- Effective LR stats (per-element) ---
+                eff = lr * (bc2 ** 0.5) / bc1 / (v.sqrt() + eps)
+                writer.add_scalar(f"{sub}/efflr_mean", float(eff.mean().item()), step)
+                writer.add_scalar(f"{sub}/efflr_min",  float(eff.min().item()), step)
+                writer.add_scalar(f"{sub}/efflr_max",  float(eff.max().item()), step)
+
+                # log10(efflr) histogram (more readable)
+                eff_log10 = torch.log10(eff.clamp_min(1e-30))
+                def _prep(x):
+                    x = x.detach().flatten()
+                    if x.numel() > 200000:
+                        idx = torch.randperm(x.numel(), device=x.device)[:200000]
+                        x = x[idx]
+                    return x
+                eff_log10_1 = _prep(eff_log10)
+
+                plt.hist(eff_log10.detach().cpu().numpy().flatten(), bins=30)
+                writer.add_figure("efflr_log10_hist", plt.gcf(), step)
+
+            # useful sanity check
+            writer.add_scalar(f"{sub}/adam_step", float(t), step)
 
 def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tensorboard_id=None, 
                       spatial=False, coords=None, plot_dims=None):
@@ -216,8 +287,8 @@ def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tenso
     writer = None
     
     if use_tensorboard_id is not None:
-        print('Logging to Tensorboard')
         writer = SummaryWriter(comment=use_tensorboard_id)
+        print(f'Logging to Tensorboard {os.getcwd()}{writer.get_logdir()}')
     
     for step in range(1, num_burnin + num_sample_steps + 1):
         try:
@@ -232,12 +303,14 @@ def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tenso
         if step % 10 == 0:
             losses.append(loss)
             steps.append(step)
+            #print(svi.optim.get_state())
+            log_adam_state_all(writer, svi, step, log_every=10)
         
         if step % 100 == 0:
             print(f"Iteration {step}, ELBO loss: {loss}")
         
         if writer is not None:
-            _log_tensorboard_metrics(writer, model, step, loss, spatial, coords, plot_dims)
+            _log_tensorboard_metrics(writer, model, D, step, loss, spatial, coords, plot_dims)
     
     end_time = datetime.now()
     runtime = round((end_time - start_time).total_seconds())
@@ -246,7 +319,7 @@ def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tenso
     return losses, steps, runtime, writer
 
 
-def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=None, plot_dims=None):
+def _log_tensorboard_metrics(writer, model, D, step, loss, spatial=False, coords=None, plot_dims=None):
     """
     Log metrics to tensorboard.
     
@@ -267,6 +340,7 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
         writer.add_scalar("Chi-squared", float(getattr(model, "chi2")), step)
     if hasattr(model, "pois"):
         writer.add_scalar("Poisson loss", float(getattr(model, "pois")), step)
+        writer.add_scalar("Pois / ELBO ratio", abs(float(getattr(model, "pois"))) / abs(loss), step)
     writer.flush()
     
     if step % 50 == 0 or step==1: # I want to see first sample too
@@ -307,6 +381,108 @@ def _log_tensorboard_metrics(writer, model, step, loss, spatial=False, coords=No
             plt.figure()
             plt.hist(pyro.param("scale_P").detach().cpu().numpy().flatten(), bins=30)
             writer.add_figure("scale_P_hist", plt.gcf(), step)
+
+        ### FROM LOYAL START HERE ###
+        ### QUESTION IS HE PASSING D HERE ###
+        if hasattr(model, "D_reconstructed"):
+            plt.figure()
+            D_reconstructed = model.D_reconstructed.detach().cpu().numpy()
+            plt.hist(D_reconstructed.flatten(), bins=30)
+            writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
+            try:
+                writer.add_scalar("D_reconstructed_mean", float(D_reconstructed.mean()), step)
+                writer.add_scalar("D_reconstructed_std", float(D_reconstructed.std()), step)
+                writer.add_scalar("D_reconstructed_min", float(D_reconstructed.min()), step)
+                writer.add_scalar("D_reconstructed_max", float(D_reconstructed.max()), step)
+            except Exception:
+                pass
+
+            try:
+                D_tensor = model.D_reconstructed.detach()
+                D_obs = None
+                if D is not None and torch.is_tensor(D):
+                    D_obs = D.detach()
+                if D_tensor.ndim >= 2:
+                    if D_tensor.ndim > 2:
+                        D_flat = D_tensor.reshape(D_tensor.shape[0], -1)
+                    else:
+                        D_flat = D_tensor
+                    if D_obs is not None:
+                        if D_obs.ndim > 2:
+                            D_obs_flat = D_obs.reshape(D_obs.shape[0], -1)
+                        else:
+                            D_obs_flat = D_obs
+                    else:
+                        D_obs_flat = None
+                    
+                    means = D_flat.mean(dim=0)
+                    vars_ = D_flat.var(dim=0, unbiased=False)
+                else:
+                    means = D_tensor
+                    vars_ = torch.zeros_like(means)
+                    D_obs_flat = D_obs
+
+                eps = torch.finfo(means.dtype).eps
+                cv2 = vars_ / means.clamp_min(eps) ** 2
+                mean_np = means.detach().cpu().numpy()
+                cv2_np = cv2.detach().cpu().numpy()
+                mask = np.isfinite(mean_np) & np.isfinite(cv2_np) & (mean_np > 0) & (cv2_np > 0)
+                mean_np = mean_np[mask]
+                cv2_np = cv2_np[mask]
+                if mean_np.size > 0:
+                    plt.figure()
+                    plt.scatter(mean_np, cv2_np, s=8, alpha=0.3, edgecolors="none")
+                    plt.xlabel("Mean")
+                    plt.ylabel("CV^2")
+                    plt.title("D_reconstructed mean vs CV^2")
+                    plt.xscale("log")
+                    plt.yscale("log")
+                    writer.add_figure("D_reconstructed_mean_cov", plt.gcf(), step)
+
+                if D_obs_flat is not None:
+                    try:
+                        exp_mean = means.detach()
+                        obs_mean = D_obs_flat.mean(dim=0).detach()
+                        exp_np = exp_mean.cpu().numpy()
+                        obs_np = obs_mean.cpu().numpy()
+                        mask = np.isfinite(exp_np) & np.isfinite(obs_np)
+                        exp_np = exp_np[mask]
+                        obs_np = obs_np[mask]
+                        if exp_np.size > 0:
+                            residuals = obs_np - exp_np
+                            fig, axes = plt.subplots(1, 2, figsize=(8, 3.2))
+                            axes[0].scatter(exp_np, obs_np, s=8, alpha=0.3, edgecolors="none")
+                            min_v = float(min(exp_np.min(), obs_np.min()))
+                            max_v = float(max(exp_np.max(), obs_np.max()))
+                            axes[0].plot([min_v, max_v], [min_v, max_v], color="gray", linewidth=1.0)
+                            axes[0].set_xlabel("Expected (mean of D_reconstructed)")
+                            axes[0].set_ylabel("Observed (mean of D)")
+                            axes[0].set_title("Expected vs observed")
+                            axes[1].scatter(exp_np, residuals, s=8, alpha=0.3, edgecolors="none")
+                            axes[1].axhline(0.0, color="gray", linewidth=1.0)
+                            axes[1].set_xlabel("Expected (mean of D_reconstructed)")
+                            axes[1].set_ylabel("Observed - expected")
+                            axes[1].set_title("Per-gene residuals")
+                            fig.suptitle("Per-gene residuals (expected vs observed)", y=1.02)
+                            fig.tight_layout()
+                            writer.add_figure("D_reconstructed_mean_cov/expected_vs_observed", fig, step)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        try:
+            mib = 1024.0 * 1024.0
+            if hasattr(torch.backends, "cuda") and torch.cuda.is_available():
+                writer.add_scalar("Mem/cuda_allocated_MiB", float(torch.cuda.memory_allocated()) / mib, step)
+                writer.add_scalar("Mem/cuda_reserved_MiB", float(torch.cuda.memory_reserved()) / mib, step)
+                writer.add_scalar("Mem/cuda_max_allocated_MiB", float(torch.cuda.max_memory_allocated()) / mib, step)
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                writer.add_scalar("Mem/mps_allocated_MiB", float(torch.mps.current_allocated_memory()) / mib, step)
+                writer.add_scalar("Mem/mps_driver_allocated_MiB", float(torch.mps.driver_allocated_memory()) / mib, step)
+        except Exception:
+            pass
+        ### FROM LOYAL END HERE ###
+        
 
     if step % 100 == 0:
         if hasattr(model, "D_reconstructed"):
@@ -587,6 +763,72 @@ def _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_n
         result_anndata.varm["sum_A2"] = sum_A2
         print("Saving sum_A2 in anndata.varm['sum_A2']")
 
+    if hasattr(model, "markers_P"):
+        markers_P = pd.DataFrame(model.markers_P.detach().cpu().numpy())
+        if markers_P.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            markers_P.columns = full_pattern_names
+        else:
+            markers_P.columns = learned_pattern_names
+        markers_P.index = result_anndata.obs.index
+        result_anndata.obsm["markers_P"] = markers_P
+        print("Saving markers in anndata.obsm['markers_P']")
+
+    
+    if hasattr(model, "markers_A"):
+        markers_A = pd.DataFrame(model.markers_A.detach().cpu().numpy().T)
+        if markers_A.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            markers_A.columns = full_pattern_names
+        else:
+            markers_A.columns = learned_pattern_names
+        markers_A.index = result_anndata.var.index
+        result_anndata.varm["markers_A"] = markers_A
+        print("Saving markers_A in anndata.varm['markers_A']")
+
+
+    if hasattr(model, "markers_Pscaled"):
+        markers_Pscaled = pd.DataFrame(model.markers_Pscaled.detach().cpu().numpy())
+        if markers_Pscaled.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            markers_Pscaled.columns = full_pattern_names
+        else:
+            markers_Pscaled.columns = learned_pattern_names
+        markers_Pscaled.index = result_anndata.obs.index
+        result_anndata.obsm["markers_Pscaled"] = markers_Pscaled
+        print("Saving markers_Pscaled in anndata.obsm['markers_Pscaled']")
+
+    
+    if hasattr(model, "markers_Ascaled"):
+        markers_Ascaled = pd.DataFrame(model.markers_Ascaled.detach().cpu().numpy().T)
+        if markers_Ascaled.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            markers_Ascaled.columns = full_pattern_names
+        else:
+            markers_Ascaled.columns = learned_pattern_names
+        markers_Ascaled.index = result_anndata.var.index
+        result_anndata.varm["markers_Ascaled"] = markers_Ascaled
+        print("Saving markers_Ascaled in anndata.varm['markers_Ascaled']")
+
+
+    if hasattr(model, "markers_Psoftmax"):
+        markers_Psoftmax = pd.DataFrame(model.markers_Psoftmax.detach().cpu().numpy())
+        if markers_Psoftmax.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            markers_Psoftmax.columns = full_pattern_names
+        else:
+            markers_Psoftmax.columns = learned_pattern_names
+        markers_Psoftmax.index = result_anndata.obs.index
+        result_anndata.obsm["markers_Psoftmax"] = markers_Psoftmax
+        print("Saving markers in anndata.obsm['markers_Psoftmax']")
+
+    
+    if hasattr(model, "markers_Asoftmax"):
+        markers_Asoftmax = pd.DataFrame(model.markers_Asoftmax.detach().cpu().numpy().T)
+        if markers_Asoftmax.shape[1] != len(learned_pattern_names): # this was semisupervised then
+            markers_Asoftmax.columns = full_pattern_names
+        else:
+            markers_Asoftmax.columns = learned_pattern_names
+        markers_Asoftmax.index = result_anndata.var.index
+        result_anndata.varm["markers_Asoftmax"] = markers_Asoftmax
+        print("Saving markers_A in anndata.varm['markers_Asoftmax']")
+
+
 
 def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale, settings, 
                            fixed_pattern_names=None, num_learned_patterns=None, supervised=None):
@@ -667,7 +909,7 @@ def create_settings_dict(num_patterns, num_total_steps, num_sample_steps, device
 
 def run_nmf_unsupervised(data, num_patterns, num_burnin=1000, num_sample_steps=20000, device=None, NB_probs=0.5, 
                         use_chisq=False, use_pois=False, use_tensorboard_id=None, spatial=False, 
-                        plot_dims=None, scale=None, model_family='gamma'):
+                        plot_dims=None, scale=None, model_family='gamma', optimizer=pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})):
     """
     Run unsupervised NMF analysis.
     
@@ -694,7 +936,7 @@ def run_nmf_unsupervised(data, num_patterns, num_burnin=1000, num_sample_steps=2
     
     model_type = f'{model_family}_unsupervised'
     model, guide, svi = setup_model_and_optimizer(
-        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, model_type=model_type
+        D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, model_type=model_type, optimizer=optimizer
     )
     print(f'Plotting with spatial coordinates: {spatial}')
     
@@ -719,7 +961,7 @@ def run_nmf_unsupervised(data, num_patterns, num_burnin=1000, num_sample_steps=2
 def run_nmf_supervised(data, num_patterns, fixed_patterns, num_burnin=1000, num_sample_steps=20000, device=None, 
                       NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None, 
                       spatial=False, plot_dims=None, scale=None, model_family='gamma',
-                      supervision_type='fixed_genes'):
+                      supervision_type='fixed_genes', optimizer=pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})):
     """
     Run supervised NMF analysis with fixed patterns.
     
@@ -751,7 +993,7 @@ def run_nmf_supervised(data, num_patterns, fixed_patterns, num_burnin=1000, num_
     model_type = f'{model_family}_supervised'
     model, guide, svi = setup_model_and_optimizer(
         D, num_patterns, scale, NB_probs, use_chisq, use_pois, device, 
-        fixed_patterns_tensor, model_type, supervision_type
+        fixed_patterns_tensor, model_type, supervision_type, optimizer=optimizer
     )
     
     losses, steps, runtime, writer = run_inference_loop(
