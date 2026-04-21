@@ -1,5 +1,8 @@
 #%%
-# Consolidate all the gamma NB models
+# Gamma NB models with one alpha (concentration) per gene
+# For A (patterns x genes): one alpha per gene (column) -> shape (num_genes,)
+# For P (samples x patterns): one alpha per sample (row) -> shape (num_samples,)
+# loc_A and loc_P remain the learned rate parameters
 import pyro
 import pyro.distributions as dist
 from pyro.nn import PyroModule
@@ -14,14 +17,14 @@ pyro.enable_validation(True)
 default_dtype = torch.float32
 
 #%%
-class Exponential_base(PyroModule):
+class GammaAlphaPerGene_NegBinomial_base(PyroModule):
     def __init__(self,
                 num_samples,
                 num_genes,
                 num_patterns,
                 use_chisq = False,
                 use_pois = False,
-                #scale = 1,
+                scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
@@ -35,14 +38,16 @@ class Exponential_base(PyroModule):
         self.num_patterns = num_patterns
         self.use_chisq = use_chisq
         self.use_pois = use_pois
+        self.scale = scale
         self.NB_probs = NB_probs
         self.device = device
 
         ## Print settings
-        print(f" ################# Running Exponential Model #################")
+        print(f" ################# Running Gamma-Negative Binomial Model (Alpha Per Gene) #################")
         print(f"Using {self.device}")
         print(f"Data is {self.num_samples} samples x {self.num_genes} genes")
         print(f"Running for {self.num_patterns} patterns")
+        print(f"Using scale of {self.scale} for the gamma distribution")
         print(f"Using Negative Binomial with probs of {self.NB_probs}")
 
         if use_chisq:
@@ -55,19 +60,21 @@ class Exponential_base(PyroModule):
         self.best_chisq_iter = 0
         self.iter = 0
 
+        self.scale = torch.tensor(scale, device=self.device, dtype=default_dtype)
+
         self.best_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.best_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
-        
+        self.best_locA = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
+        self.best_locP = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
         self.sum_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.sum_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
-
+        
         self.sum_A2 = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.sum_P2 = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
-
         self.A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
         self.P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
 
-        
         self.markers_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
         self.markers_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
 
@@ -78,26 +85,39 @@ class Exponential_base(PyroModule):
         self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
 
         ## Set up the pyro parameters
-        #### A parameter for Exponential to Populate A Matrix ####
-        self.scale_A = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.nonnegative)
+        #### Matrix A is patterns x genes ####
+        #### loc_A is the learned rate; shape (patterns, genes) ####
+        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
+        
+        #### Matrix P is samples x patterns ####
+        #### loc_P is the learned rate; shape (samples, patterns) ####
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
 
-        #### P parameter for Exponential to Populate P Matrix ####
-        self.scale_P = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.nonnegative)
+        #### One alpha per gene for A (column of A = one gene) -> shape (1, num_genes) ####
+        #### Broadcast over patterns automatically ####
+        #### Init >1 so genes start with a non-zero mode; model can learn down toward 0 for sparse genes ####
+        self.alpha_A = PyroParam(2.0 * torch.ones(1, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
+
+        #### One alpha per sample for P (row of P = one sample) -> shape (num_samples, 1) ####
+        #### Broadcast over patterns automatically ####
+        #### Init <1 so samples start sparse across patterns ####
+        self.alpha_P = PyroParam(0.5 * torch.ones(self.num_samples, 1, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
+
 
     def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
-        # Nested plates for pixel-wise independence
+        # alpha_A is (1, num_genes), broadcasts to (num_patterns, num_genes)
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
-                A = pyro.sample("A", dist.Exponential(self.scale_A)) # sample A from Exponential
+                A = pyro.sample("A", dist.Gamma(self.alpha_A, self.loc_A)) # one alpha per gene column
         self.A = A # save A to model
 
-        # Nested plates for pixel-wise independence
+        # alpha_P is (num_samples, 1), broadcasts to (num_samples, num_patterns)
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
-                P = pyro.sample("P", dist.Exponential(self.scale_P)) # sample P from Exponential
+                P = pyro.sample("P", dist.Gamma(self.alpha_P, self.loc_P)) # one alpha per sample row
         self.P = P # save P to model
 
         # D_reconstucted is samples x genes; calculated as the product of P and A
@@ -116,10 +136,9 @@ class Exponential_base(PyroModule):
             self.best_chisq_iter = self.iter
             self.best_A = A
             self.best_P = P
-            self.best_scaleA = self.scale_A
-            self.best_scaleP = self.scale_P
+            self.best_locA = self.loc_A
+            self.best_locP = self.loc_P
 
-            
         # Include chi squared loss in the model
         if self.use_chisq:
             pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
@@ -130,7 +149,6 @@ class Exponential_base(PyroModule):
             poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
-     
         if samp:
             with torch.no_grad():
                 #correction = P.max(axis=0).values
@@ -142,7 +160,6 @@ class Exponential_base(PyroModule):
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn) 
 
-                
                 max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
                 A_binary = torch.zeros_like(A)
                 A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
@@ -168,145 +185,7 @@ class Exponential_base(PyroModule):
 
                 sumPerGene = An.sum(dim=0)  # shape: (Samp,)
                 self.markers_Asoftmax += (An / sumPerGene)
-       
 
-        pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
-
-    def guide(D):
-        pass
-
-
-class Exponential_SSFixedGenes(Exponential_base):
-    def __init__(self,
-                num_samples,
-                num_genes,
-                num_patterns, # num unsupervised
-                fixed_patterns, # of shape genes x fixed patterns
-                use_chisq = False,
-                use_pois = False,
-                #scale = 1,
-                NB_probs = 0.5,
-                device=torch.device('cpu')
-                 #init_method="mean", # Options: (["mean", "svd", None]): TODOS
-            ):
-
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
-
-        ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
-        self.fixed_patterns = fixed_patterns # of shape genes x fixed patterns
-        self.num_fixed_patterns = fixed_patterns.shape[1]
-        print(f"################# Running Exponential Model with fixed genes #################")
-        print(f"Fixing {self.num_fixed_patterns} patterns")
-
-        #### Matrix P is samples x patterns (supervised+unsupervised) ####
-        self.best_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-        self.sum_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-        self.sum_P2 = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-
-        #### Matrix A total is expanded ###
-        self.sum_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
-        self.sum_A2 = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
-
-        #### Fixed patterns are samples x patterns ####
-        self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
-
-        self.markers_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
-        self.markers_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-
-        self.markers_Ascaled = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
-        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-
-        self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
-        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-
-    def forward(self, D, U, samp=False):
-
-        self.iter += 1 # keep a running total of iterations
-
-        # Nested plates for pixel-wise independence
-        with pyro.plate("patterns", self.num_patterns, dim = -2):
-            with pyro.plate("genes", self.num_genes, dim = -1):
-                A = pyro.sample("A", dist.Exponential(self.scale_A))
-        self.A = A
-
-        # Nested plates for pixel-wise independence
-        with pyro.plate("samples", self.num_samples, dim=-2):
-            with pyro.plate("patterns_P", self.num_fixed_patterns + self.num_patterns, dim = -1):
-                P = pyro.sample("P", dist.Exponential(self.scale_P)) # sample P from Exponential
-        self.P = P
-
-        A_total = torch.cat((self.fixed_A.T, A), dim=0)
-        self.A_total = A_total # save P_total
-
-        # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
-        D_reconstructed = torch.matmul(P, A_total)  # (samples x genes)
-        self.D_reconstructed = D_reconstructed # save D_reconstructed
-        
-        # Calculate chi squared
-        chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-        self.chi2  = chi2
-        theta = self.D_reconstructed
-        poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-        self.pois  = poisL
-
-        if chi2 < self.best_chisq: # if this is a better chi squared, save it
-            self.best_chisq = chi2
-            self.best_chisq_iter = self.iter
-            self.best_A = A
-            self.best_P = P
-            self.best_scaleA = self.scale_A
-            self.best_scaleP = self.scale_P
-
-
-        # Include chi squared loss in the model
-        if self.use_chisq:
-            pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
-
-        if self.use_pois:
-            # Error Model Poisson
-            theta = self.D_reconstructed
-            poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-            # Addition to Elbow Loss - should make this at least as large as Elbow
-            pyro.factor("pois.loss",10.*poisL)
-        
-        if samp:
-            with torch.no_grad():
-                #correction = P.max(axis=0).values
-                correction = P.sum(axis=0).values
-                Pn = P / correction
-                An = A_total * correction.unsqueeze(1)
-                self.sum_A += An
-                self.sum_P += Pn
-                self.sum_A2 += torch.square(An)
-                self.sum_P2 += torch.square(Pn)
-
-
-                max_pat_per_gene = A_total.argmax(dim=0)  # shape: (Gene,)
-                A_binary = torch.zeros_like(A_total)
-                A_binary[max_pat_per_gene, torch.arange(A_total.shape[1])] = 1
-                self.markers_A += A_binary
-
-                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
-                P_binary = torch.zeros_like(P)
-                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
-                self.markers_P += P_binary
-
-                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
-                A_binaryscaled = torch.zeros_like(An)
-                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
-                self.markers_Ascaled += A_binaryscaled
-
-                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
-                P_binaryscaled = torch.zeros_like(Pn)
-                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
-                self.markers_Pscaled += P_binaryscaled
-
-                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
-                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
-
-                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
-                self.markers_Asoftmax += (An / sumPerGene)
-       
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
@@ -316,7 +195,7 @@ class Exponential_SSFixedGenes(Exponential_base):
 
 
 
-class Exponential_SSFixedSamples(Exponential_base):
+class GammaAlphaPerGene_NegBinomial_SSFixedSamples(GammaAlphaPerGene_NegBinomial_base):
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -324,58 +203,66 @@ class Exponential_SSFixedSamples(Exponential_base):
                 fixed_patterns, # of shape samples x fixed patterns
                 use_chisq = False,
                 use_pois = False,
-                #scale = 1,
+                scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
+        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, scale, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed P and A extended by this amount ##
 
         self.fixed_patterns = fixed_patterns # of shape samples x fixed patterns
         self.num_fixed_patterns = fixed_patterns.shape[1]
-        print(f"################# Running Exponential Model with fixed samples #################")
+        print(f"################# Running Gamma-Negative Binomial Model (Alpha Per Gene) with fixed samples #################")
         print(f"Fixing {self.num_fixed_patterns} patterns")
 
+        total_patterns = self.num_fixed_patterns + self.num_patterns
 
         #### Matrix A is patterns (supervised+unsupervised) x genes ####
-        self.best_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
-        self.sum_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
-        self.sum_A2 = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
+        self.loc_A = PyroParam(torch.rand(total_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)        
+        self.best_A = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype)
+        self.best_locA = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype)
+        self.sum_A = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype)
+        self.sum_A2 = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype)
+
+        #### alpha_A: one per gene column, same shape regardless of total_patterns ####
+        self.alpha_A = PyroParam(2.0 * torch.ones(1, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
 
         #### Matrix P total is expanded ###
-        self.sum_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
-        self.sum_P2 = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+        self.sum_P = torch.zeros(self.num_samples, total_patterns, device=self.device, dtype=default_dtype)
+        self.sum_P2 = torch.zeros(self.num_samples, total_patterns, device=self.device, dtype=default_dtype)
 
         #### Fixed patterns are samples x patterns ####
-        self.fixed_P = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
+        self.fixed_P = torch.tensor(fixed_patterns, device=self.device, dtype=default_dtype) # tensor, not updatable
 
+        self.markers_A = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, total_patterns, device=self.device, dtype=default_dtype)
 
-        self.markers_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
-        self.markers_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+        self.markers_Ascaled = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, total_patterns, device=self.device, dtype=default_dtype)
 
-        self.markers_Ascaled = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
-        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+        self.markers_Asoftmax = torch.zeros(total_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, total_patterns, device=self.device, dtype=default_dtype)
 
-        self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
-        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
 
     def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
-        # Nested plates for pixel-wise independence
-        with pyro.plate("patterns", self.num_fixed_patterns + self.num_patterns, dim = -2):
+        total_patterns = self.num_fixed_patterns + self.num_patterns
+
+        # alpha_A is (1, num_genes), broadcasts over total_patterns
+        with pyro.plate("patterns", total_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
-                A = pyro.sample("A", dist.Exponential(self.scale_A))
+                A = pyro.sample("A", dist.Gamma(self.alpha_A, self.loc_A)) # one alpha per gene column
         self.A = A
 
-        # Nested plates for pixel-wise independence
+        # alpha_P is (num_samples, 1), broadcasts over num_patterns
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
-                P = pyro.sample("P", dist.Exponential(self.scale_P)) # sample P from Exponential
+                P = pyro.sample("P", dist.Gamma(self.alpha_P, self.loc_P)) # one alpha per sample row
         self.P = P
 
         P_total = torch.cat((self.fixed_P, P), dim=1)
@@ -397,9 +284,8 @@ class Exponential_SSFixedSamples(Exponential_base):
             self.best_chisq_iter = self.iter
             self.best_A = A
             self.best_P = P
-            self.best_scaleA = self.scale_A
-            self.best_scaleP = self.scale_P
-
+            self.best_locA = self.loc_A
+            self.best_locP = self.loc_P
 
         # Include chi squared loss in the model
         if self.use_chisq:
@@ -411,18 +297,18 @@ class Exponential_SSFixedSamples(Exponential_base):
             poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
+
         if samp:
             with torch.no_grad():
                 #correction = P_total.max(axis=0).values
-                correction = P_total.sum(axis=0).values
+                correction = P_total.sum(axis=0)
+
                 Pn = P_total / correction
                 An = A * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn)
-
-
 
                 max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
                 A_binary = torch.zeros_like(A)
@@ -449,11 +335,10 @@ class Exponential_SSFixedSamples(Exponential_base):
 
                 sumPerGene = An.sum(dim=0)  # shape: (Samp,)
                 self.markers_Asoftmax += (An / sumPerGene)
-       
-            
+
+
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
 
 def guide(D):
     pass
-

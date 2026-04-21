@@ -1,4 +1,4 @@
-from pyroNMF.models.exp_pois_models_noNB import ExponentialPoisson_base
+#from pyroNMF.models.deprecated.exp_pois_models_noNB import ExponentialPoisson_base
 import torch
 
 from pyroNMF.models.gamma_NB_models import (
@@ -6,11 +6,24 @@ from pyroNMF.models.gamma_NB_models import (
     Gamma_NegBinomial_SSFixedGenes,
     Gamma_NegBinomial_SSFixedSamples
 )
-from pyroNMF.models.exp_pois_models import (
-    Exponential_base,
-    Exponential_SSFixedGenes,
-    Exponential_SSFixedSamples
+from pyroNMF.models.expSingle_NB_models import (
+    ExponentialSingle_base,
+    ExponentialSingle_SSFixedGenes,
+    ExponentialSingle_SSFixedSamples
 )
+from pyroNMF.models.exp_NB_models import (
+    Exponential_NegBinomial_base,
+    Exponential_NegBinomial_SSFixedGenes,
+    Exponential_NegBinomial_SSFixedSamples
+)
+
+#from pyroNMF.models.extras.gamma_NB_fixedAlphas import GammaFixAlpha_NegBinomial_base
+#from pyroNMF.models.gamma_NB_alphaPerGene import GammaAlphaPerGene_NegBinomial_base
+#from pyroNMF.models.gamma_NB_alphaPerPattern import GammaAlphaPerPattern_NegBinomial_base
+#from pyroNMF.models.gamma_NB_hierarchicalAlpha import GammaHierarchicalAlpha_NegBinomial_base
+#from pyroNMF.models.gamma_NB_hierarchicalAlpha import GammaHierarchicalAlpha_NegBinomial_base
+#from pyroNMF.models.gamma_NB_alphaPerPattern_fixedScale import GammaAlphaPerPattern_FixScale_NegBinomial_base
+
 from pyroNMF.utils import detect_device, plot_grid, plot_grid_noAlpha
 from torch.utils.tensorboard import SummaryWriter
 import os
@@ -67,7 +80,7 @@ def validate_data(data, spatial=False, plot_dims=None, num_patterns=None):
     return coords
 
 
-def prepare_tensors(data, device=None):
+def prepare_tensors(data, scale=None, device=None):
     """
     Prepare and move tensors to the specified device.
     
@@ -93,8 +106,10 @@ def prepare_tensors(data, device=None):
         print('Setting D')
         D = torch.tensor(data.X, dtype=default_dtype).to(device)
     U = (D * 0.1).clip(min=0.3).to(device)
-    scale = torch.tensor((D.cpu().numpy().std()) * 2, dtype=default_dtype, device=device)
-    
+    if scale is None:
+        scale = torch.tensor((D.cpu().numpy().std()) * 2, dtype=default_dtype, device=device)
+    else:
+        scale=torch.tensor(scale, dtype=default_dtype, device=device)
     return D, U, scale, device
 
 
@@ -112,7 +127,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     - use_chisq: Whether to use chi-squared loss
     - device: Device to run on
     - fixed_patterns: Fixed patterns for supervised learning
-    - model_type: 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', 'exponential_supervised'
+    - model_type: 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', 'exponential_supervised', , 'exponentialSingle_unsupervised', 'exponentialSingle_supervised'
     - supervision_type: 'fixed_genes' or 'fixed_samples' (for supervised models)
     
     Returns:
@@ -120,7 +135,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
     - guide: AutoNormal guide
     - svi: SVI optimizer
     """
-    print(model_type)
+    print(f'model_type is {model_type}')
     # Instantiate the model
     if model_type == 'gamma_unsupervised':
         model = Gamma_NegBinomial_base(
@@ -144,25 +159,78 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
         else:
             raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
         
+    # Instantiate the model
     elif model_type == 'exponential_unsupervised':
-        model = Exponential_base(
+        model = Exponential_NegBinomial_base(
             D.shape[0], D.shape[1], num_patterns, 
-            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
-        )
-    elif model_type == 'exponentialPois_unsupervised':
-        model = ExponentialPoisson_base(
-            D.shape[0], D.shape[1], num_patterns, 
-            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
+            use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
+            NB_probs=NB_probs, device=device
         )
     elif model_type == 'exponential_supervised':
         if supervision_type == 'fixed_genes':
-            model = Exponential_SSFixedGenes(
+            model = Exponential_NegBinomial_SSFixedGenes(
+                D.shape[0], D.shape[1], num_patterns, 
+                fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
+                scale=scale, NB_probs=NB_probs, device=device
+            )
+        elif supervision_type == 'fixed_samples':
+            model = Exponential_NegBinomial_SSFixedSamples(
+                D.shape[0], D.shape[1], num_patterns, 
+                fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
+                scale=scale, NB_probs=NB_probs, device=device
+            )
+        else:
+            raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
+
+    #elif model_type == 'gammaFixAlpha_unsupervised':
+    #    model = GammaFixAlpha_NegBinomial_base(
+    #        D.shape[0], D.shape[1], num_patterns, 
+    #        use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
+    #        NB_probs=NB_probs, device=device
+    #    )
+
+    #elif model_type == 'gammaAlphaPerGene_unsupervised':
+    #    model = GammaAlphaPerGene_NegBinomial_base(
+    #        D.shape[0], D.shape[1], num_patterns, 
+    #        use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
+    #        NB_probs=NB_probs, device=device
+    #    )
+    
+    #elif model_type == 'gammaAlphaPerPattern_unsupervised':
+    #    model = GammaAlphaPerPattern_NegBinomial_base(
+    #        D.shape[0], D.shape[1], num_patterns, 
+    #        use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
+    #        NB_probs=NB_probs, device=device
+    #    )
+
+    #elif model_type == 'gammaHierarchicalAlpha_unsupervised':
+    #    model = GammaHierarchicalAlpha_NegBinomial_base(
+    #        D.shape[0], D.shape[1], num_patterns, 
+    #        use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
+    #        NB_probs=NB_probs, device=device
+    #    )
+    #elif model_type == 'gammaAlphaPerPattern_fixedScale_unsupervised':
+    #    model = GammaAlphaPerPattern_FixScale_NegBinomial_base(
+    #        D.shape[0], D.shape[1], num_patterns, 
+    #        use_chisq=use_chisq, use_pois=use_pois,scale=scale, 
+    #        NB_probs=NB_probs, device=device
+    #    )
+
+    elif model_type == 'exponentialSingle_unsupervised':
+        model = ExponentialSingle_base(
+            D.shape[0], D.shape[1], num_patterns, 
+            use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
+        )
+        
+    elif model_type == 'exponentialSingle_supervised':
+        if supervision_type == 'fixed_genes':
+            model = ExponentialSingle_SSFixedGenes(
                 D.shape[0], D.shape[1], num_patterns, 
                 fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
                 NB_probs=NB_probs, device=device
             )
         elif supervision_type == 'fixed_samples':
-            model = Exponential_SSFixedSamples(
+            model = ExponentialSingle_SSFixedSamples(
                 D.shape[0], D.shape[1], num_patterns, 
                 fixed_patterns=fixed_patterns, use_chisq=use_chisq, use_pois=use_pois,
                 NB_probs=NB_probs, device=device
@@ -170,7 +238,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
         else:
             raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
     else:
-        raise ValueError("model_type must be 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', or 'exponential_supervised'")
+        raise ValueError("model_type must be 'gamma_unsupervised', 'gamma_supervised', 'exponential_unsupervised', or 'exponential_supervised', 'exponentialSingle_unsupervised', or 'exponentialSingle_supervised")
     
     #pyro.render_model(model, model_args=(D,D), 
     #                render_params=True,
@@ -258,6 +326,7 @@ def log_adam_state_all(writer, svi, step, tag_prefix="OptimAdam", log_every=1):
 
             # useful sanity check
             writer.add_scalar(f"{sub}/adam_step", float(t), step)
+
 
 def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tensorboard_id=None, 
                       spatial=False, coords=None, plot_dims=None):
@@ -354,6 +423,13 @@ def _log_tensorboard_metrics(writer, model, D, step, loss, spatial=False, coords
                     writer.add_figure("loc_P", plt.gcf(), step)
                 except Exception:
                     pass
+            if 'alpha_P' in store:
+                try:
+                    alphaP = pyro.param("alpha_P").detach().cpu().numpy()
+                    plot_grid(alphaP, coords, plot_dims[0], plot_dims[1], savename=None)
+                    writer.add_figure("alpha_P", plt.gcf(), step)
+                except Exception:
+                    pass
 
             # Plot current sampled P if available
             if hasattr(model, "P"):
@@ -373,6 +449,16 @@ def _log_tensorboard_metrics(writer, model, D, step, loss, spatial=False, coords
             plt.figure()
             plt.hist(pyro.param("loc_A").detach().cpu().numpy().flatten(), bins=30)
             writer.add_figure("loc_A_hist", plt.gcf(), step)
+        
+        if 'alpha_P' in store:
+            plt.figure()
+            sns.heatmap(pyro.param("alpha_P").detach().cpu(), annot=True, fmt=".2f", cmap="viridis")
+            writer.add_figure("alpha_P_hist", plt.gcf(), step)
+        if 'alpha_A' in store:
+            plt.figure()
+            sns.heatmap(pyro.param("alpha_A").detach().cpu(), annot=True, fmt=".2f", cmap="viridis")
+            writer.add_figure("alpha_A_hist", plt.gcf(), step)
+
         if 'scale_A' in store:
             plt.figure()
             plt.hist(pyro.param("scale_A").detach().cpu().numpy().flatten(), bins=30)
@@ -528,7 +614,22 @@ def _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_n
         loc_A.index = result_anndata.var.index
         result_anndata.varm["loc_A"] = loc_A
         print("Saving loc_A in anndata.varm['loc_A']")
-    
+
+
+    ## Save loc_A/P if present (Gamma models)
+    if "alpha_P" in store:
+        print("Saving alpha_P")
+        print(pyro.param("alpha_P").shape)
+        #alpha_P = pd.DataFrame(pyro.param("alpha_P").detach().cpu().numpy())
+        alpha_P = pyro.param("alpha_P").detach().cpu().numpy()
+        result_anndata.uns["alpha_P"] = alpha_P
+        print("Saving alpha_P in anndata.uns['alpha_P']")
+    if "alpha_A" in store:
+        #alpha_A = pd.DataFrame(pyro.param("alpha_A").detach().cpu().numpy().T)
+        alpha_A = pyro.param("alpha_A").detach().cpu().numpy().T
+        result_anndata.uns["alpha_A"] = alpha_A
+        print("Saving alpha_A in anndata.uns['alpha_A']")
+
 
     ### Save scale_A/P (scalar) if present (Exponential models)
     if "scale_P" in store:
@@ -931,7 +1032,7 @@ def run_nmf_unsupervised(data, num_patterns, num_burnin=1000, num_sample_steps=2
     - result_anndata: AnnData object with results
     """
     coords = validate_data(data, spatial, plot_dims, num_patterns)
-    D, U, scale, device = prepare_tensors(data, device)
+    D, U, scale, device = prepare_tensors(data, scale, device)
     print(f"D shape: {D.shape}, U shape: {U.shape}")
     
     model_type = f'{model_family}_unsupervised'
