@@ -21,7 +21,7 @@ class Exponential_NegBinomial_base(PyroModule):
                 num_patterns,
                 use_chisq = False,
                 use_pois = False,
-                scale = 1,
+                #scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
@@ -35,7 +35,7 @@ class Exponential_NegBinomial_base(PyroModule):
         self.num_patterns = num_patterns
         self.use_chisq = use_chisq
         self.use_pois = use_pois
-        self.scale = scale
+        #self.scale = scale
         self.NB_probs = NB_probs
         self.device = device
 
@@ -57,7 +57,7 @@ class Exponential_NegBinomial_base(PyroModule):
         self.best_chisq_iter = 0
         self.iter = 0
 
-        self.scale = torch.tensor(scale, device=self.device, dtype=default_dtype)
+        #self.scale = torch.tensor(scale, device=self.device, dtype=default_dtype)
 
         self.best_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.best_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
@@ -90,7 +90,7 @@ class Exponential_NegBinomial_base(PyroModule):
         #### Initialize randomly, but with positive constraint ####
         self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype),constraint=dist.constraints.nonnegative)
         #### Single fixed scale parameter for gammas ####
-        self.scale = scale
+        #self.scale = scale
 
 
     def forward(self, D, U, samp=False):
@@ -191,13 +191,13 @@ class Exponential_NegBinomial_SSFixedGenes(Exponential_NegBinomial_base):
                 fixed_patterns, # of shape genes x fixed patterns
                 use_chisq = False,
                 use_pois = False,
-                scale = 1,
+                #scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, scale, NB_probs, device) 
+        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
 
@@ -335,13 +335,13 @@ class Exponential_NegBinomial_SSFixedSamples(Exponential_NegBinomial_base):
                 fixed_patterns, # of shape samples x fixed patterns
                 use_chisq = False,
                 use_pois = False,
-                scale = 1,
+                #scale = 1,
                 NB_probs = 0.5,
                 device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, scale, NB_probs, device) 
+        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed P and A extended by this amount ##
 

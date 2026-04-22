@@ -999,6 +999,11 @@ def run_nmf(
     fixed_patterns_tensor = None
  
     if fixed_patterns is None:
+        if supervision_type is not None:
+            print('Warning, supervision was requested but no supervised patterns provided')
+            print('Falling back to unsupervised')
+        else:
+            print('Using unsupervised mode')
         # ---- Unsupervised ----
         model_type = f'{model_family}_unsupervised'
         model, guide, svi = setup_model_and_optimizer(
@@ -1006,6 +1011,7 @@ def run_nmf(
             device, model_type=model_type, optimizer=optimizer
         )
     else:
+        print('Using semisupervised mode')
         # ---- Supervised ----
         model_type            = f'{model_family}_supervised'
         fixed_pattern_names   = list(fixed_patterns.columns)

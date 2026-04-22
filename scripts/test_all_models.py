@@ -105,6 +105,7 @@ nmf_res = run_nmf(data, # data: Expects data in form of anndata
                     20, # num_patterns: Number of patterns is the number of latent features to learn
                     num_burnin=num_steps,
                     num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
+                    fixed_patterns=layers,
                     spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                     use_pois=False, use_chisq=False, # optional added loss terms
                     use_tensorboard_id='_testGammaSSp', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -123,6 +124,7 @@ nmf_res = run_nmf(data, # data: Expects data in form of anndata
                     20, # num_patterns: Number of patterns is the number of latent features to learn
                     num_burnin=num_steps,
                     num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
+                    fixed_patterns=layers,
                     spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                     use_pois=False, use_chisq=False, # optional added loss terms
                     use_tensorboard_id='_testExpSSp', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -141,6 +143,7 @@ nmf_res = run_nmf(data, # data: Expects data in form of anndata
                     20, # num_patterns: Number of patterns is the number of latent features to learn
                     num_burnin=num_steps,
                     num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
+                    fixed_patterns=layers,
                     spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                     use_pois=False, use_chisq=False, # optional added loss terms
                     use_tensorboard_id='_testExpSinSSp', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -161,6 +164,7 @@ nmf_res = run_nmf(data, # data: Expects data in form of anndata
                     20, # num_patterns: Number of patterns is the number of latent features to learn
                     num_burnin=num_steps,
                     num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
+                    fixed_patterns=gene_layers,
                     spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                     use_pois=False, use_chisq=False, # optional added loss terms
                     use_tensorboard_id='_testGammaSSg', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -179,6 +183,7 @@ nmf_res = run_nmf(data, # data: Expects data in form of anndata
                     20, # num_patterns: Number of patterns is the number of latent features to learn
                     num_burnin=num_steps,
                     num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
+                    fixed_patterns=gene_layers,
                     spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                     use_pois=False, use_chisq=False, # optional added loss terms
                     use_tensorboard_id='_testExpSSg', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard
@@ -197,6 +202,7 @@ nmf_res = run_nmf(data, # data: Expects data in form of anndata
                     20, # num_patterns: Number of patterns is the number of latent features to learn
                     num_burnin=num_steps,
                     num_sample_steps=num_steps, # num_steps: Number of steps is the number of training iterations
+                    fixed_patterns=gene_layers,
                     spatial=True, plot_dims=[5,4],  # spatial: If True, will use spatial coordinates in obsm['spatial'] to plot patterns, if False, nothing will be plotted
                     use_pois=False, use_chisq=False, # optional added loss terms
                     use_tensorboard_id='_testExpSinSSg', #: Optional string to identify this run in tensorboard, if None, will not log to tensorboard

@@ -39,7 +39,7 @@ class ExponentialSingle_base(PyroModule):
         self.device = device
 
         ## Print settings
-        print(f" ################# Running Exponential Model #################")
+        print(f" ################# Running ExponentialSingle Model #################")
         print(f"Using {self.device}")
         print(f"Data is {self.num_samples} samples x {self.num_genes} genes")
         print(f"Running for {self.num_patterns} patterns")
@@ -195,7 +195,7 @@ class ExponentialSingle_SSFixedGenes(ExponentialSingle_base):
         ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
         self.fixed_patterns = fixed_patterns # of shape genes x fixed patterns
         self.num_fixed_patterns = fixed_patterns.shape[1]
-        print(f"################# Running Exponential Model with fixed genes #################")
+        print(f"################# Running ExponentialSingle Model with fixed genes #################")
         print(f"Fixing {self.num_fixed_patterns} patterns")
 
         #### Matrix P is samples x patterns (supervised+unsupervised) ####
@@ -272,7 +272,7 @@ class ExponentialSingle_SSFixedGenes(ExponentialSingle_base):
         if samp:
             with torch.no_grad():
                 #correction = P.max(axis=0).values
-                correction = P.sum(axis=0).values
+                correction = P.sum(axis=0)
                 Pn = P / correction
                 An = A_total * correction.unsqueeze(1)
                 self.sum_A += An
@@ -336,7 +336,7 @@ class ExponentialSingle_SSFixedSamples(ExponentialSingle_base):
 
         self.fixed_patterns = fixed_patterns # of shape samples x fixed patterns
         self.num_fixed_patterns = fixed_patterns.shape[1]
-        print(f"################# Running Exponential Model with fixed samples #################")
+        print(f"################# Running ExponentialSingle Model with fixed samples #################")
         print(f"Fixing {self.num_fixed_patterns} patterns")
 
 
@@ -414,7 +414,7 @@ class ExponentialSingle_SSFixedSamples(ExponentialSingle_base):
         if samp:
             with torch.no_grad():
                 #correction = P_total.max(axis=0).values
-                correction = P_total.sum(axis=0).values
+                correction = P_total.sum(axis=0)
                 Pn = P_total / correction
                 An = A * correction.unsqueeze(1)
                 self.sum_A += An
