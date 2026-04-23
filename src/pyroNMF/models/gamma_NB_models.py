@@ -1,4 +1,3 @@
-"""Gamma-prior NMF models with Negative Binomial likelihoods."""
 #%%
 # Consolidate all the gamma NB models
 import pyro
@@ -16,32 +15,6 @@ default_dtype = torch.float32
 
 #%%
 class Gamma_NegBinomial_base(PyroModule):
-    """Gamma-prior NMF model with Negative Binomial likelihood.
-
-    Factorizes the observed count matrix ``D`` (samples x genes) into
-    ``P @ A`` with Gamma priors on both factors. Optionally adds
-    chi-squared and/or Poisson terms to the loss, and tracks the best
-    parameters by chi-squared during training.
-
-    Parameters
-    ----------
-    num_samples : int
-        Number of samples (rows in ``D``).
-    num_genes : int
-        Number of genes/features (columns in ``D``).
-    num_patterns : int
-        Number of latent patterns to learn.
-    use_chisq : bool, optional
-        If True, adds a chi-squared loss term via ``pyro.factor``.
-    use_pois : bool, optional
-        If True, adds a Poisson log-likelihood term via ``pyro.factor``.
-    scale : float, optional
-        Scalar used as the second parameter to ``dist.Gamma``.
-    NB_probs : float, optional
-        Probability parameter for the Negative Binomial likelihood.
-    device : torch.device, optional
-        Device for parameters and intermediate tensors.
-    """
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -54,7 +27,6 @@ class Gamma_NegBinomial_base(PyroModule):
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
     
-        """Initialize the model and tracking buffers."""
         super().__init__()
 
         ## Initialize parameters
@@ -100,29 +72,28 @@ class Gamma_NegBinomial_base(PyroModule):
         self.A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
         self.P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
 
+        self.markers_A = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Ascaled = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Asoftmax = torch.zeros(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype)
+
         ## Set up the pyro parameters
         #### Matrix A is patterns x genes ####
         #### Initialize randomly, but with positive constraint ####
-        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)
+        self.loc_A = PyroParam(torch.rand(self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.nonnegative)
         
         #### Matrix P is samples x patterns ####
         #### Initialize randomly, but with positive constraint ####
-        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype),constraint=dist.constraints.positive)
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_patterns, device=self.device, dtype=default_dtype),constraint=dist.constraints.nonnegative)
         #### Single fixed scale parameter for gammas ####
         self.scale = scale
 
 
-    def forward(self, D, U):
-        """Run one stochastic forward pass of the model.
-
-        Parameters
-        ----------
-        D : torch.Tensor
-            Observed count matrix with shape ``(num_samples, num_genes)``.
-        U : torch.Tensor
-            Per-entry scale/uncertainty for chi-squared computation, same
-            shape as ``D``.
-        """
+    def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -167,51 +138,52 @@ class Gamma_NegBinomial_base(PyroModule):
             poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
-     
-        with torch.no_grad():
-            correction = P.max(axis=0).values
-            Pn = P / correction
-            An = A * correction.unsqueeze(1)
-            self.sum_A += An
-            self.sum_P += Pn
-            self.sum_A2 += torch.square(An)
-            self.sum_P2 += torch.square(Pn) 
+        if samp:
+            with torch.no_grad():
+                #correction = P.max(axis=0).values
+                correction = P.sum(axis=0)
+                Pn = P / correction
+                An = A * correction.unsqueeze(1)
+                self.sum_A += An
+                self.sum_P += Pn
+                self.sum_A2 += torch.square(An)
+                self.sum_P2 += torch.square(Pn) 
+
+                max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(A)
+                A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
+                self.markers_A += A_binary
+
+                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(P)
+                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
+                self.markers_P += P_binary
+
+                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
+                A_binaryscaled = torch.zeros_like(An)
+                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
+                self.markers_Ascaled += A_binaryscaled
+
+                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
+                P_binaryscaled = torch.zeros_like(Pn)
+                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
+                self.markers_Pscaled += P_binaryscaled
+
+                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
+                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
+
+                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
+                self.markers_Asoftmax += (An / sumPerGene)
+       
+
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
     def guide(D):
-        """Placeholder guide (use AutoNormal externally)."""
         pass
 
 
 class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
-    """Semi-supervised Gamma model with fixed gene patterns.
-
-    Extends ``Gamma_NegBinomial_base`` by fixing a set of patterns over genes
-    and learning additional patterns. The fixed patterns are concatenated to
-    the learned ``A`` matrix during reconstruction.
-
-    Parameters
-    ----------
-    num_samples : int
-        Number of samples (rows in ``D``).
-    num_genes : int
-        Number of genes/features (columns in ``D``).
-    num_patterns : int
-        Number of additional patterns to learn.
-    fixed_patterns : array-like
-        Fixed patterns with shape ``(num_genes, num_fixed_patterns)``.
-    use_chisq : bool, optional
-        If True, adds a chi-squared loss term.
-    use_pois : bool, optional
-        If True, adds a Poisson log-likelihood term.
-    scale : float, optional
-        Scalar used as the second parameter to ``dist.Gamma``.
-    NB_probs : float, optional
-        Probability parameter for the Negative Binomial likelihood.
-    device : torch.device, optional
-        Device for parameters and tensors.
-    """
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -225,7 +197,6 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        """Initialize the semi-supervised model with fixed gene patterns."""
         super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, scale, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
@@ -237,7 +208,7 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
 
 
         #### Matrix P is samples x patterns (supervised+unsupervised) ####
-        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)        
+        self.loc_P = PyroParam(torch.rand(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype), constraint=dist.constraints.nonnegative)        
         self.best_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
         self.sum_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
         self.sum_P2 = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
@@ -249,16 +220,18 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
         #### Fixed patterns are samples x patterns ####
         self.fixed_A = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
 
-    def forward(self, D, U):
-        """Run one stochastic forward pass with fixed gene patterns.
 
-        Parameters
-        ----------
-        D : torch.Tensor
-            Observed count matrix with shape ``(num_samples, num_genes)``.
-        U : torch.Tensor
-            Per-entry scale/uncertainty for chi-squared computation.
-        """
+        self.markers_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Ascaled = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+
+    def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -307,52 +280,54 @@ class Gamma_NegBinomial_SSFixedGenes(Gamma_NegBinomial_base):
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
         
-        with torch.no_grad():
-            correction = P.max(axis=0).values
-            Pn = P / correction
-            An = A_total * correction.unsqueeze(1)
-            self.sum_A += An
-            self.sum_P += Pn
-            self.sum_A2 += torch.square(An)
-            self.sum_P2 += torch.square(Pn)
+        if samp:
+            with torch.no_grad():
+                #correction = P.max(axis=0).values
+                correction = P.sum(axis=0)
+
+                Pn = P / correction
+                An = A_total * correction.unsqueeze(1)
+                self.sum_A += An
+                self.sum_P += Pn
+                self.sum_A2 += torch.square(An)
+                self.sum_P2 += torch.square(Pn) 
+
+                max_pat_per_gene = A_total.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(A_total)
+                A_binary[max_pat_per_gene, torch.arange(A_total.shape[1])] = 1
+                self.markers_A += A_binary
+
+                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(P)
+                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
+                self.markers_P += P_binary
+
+                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
+                A_binaryscaled = torch.zeros_like(An)
+                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
+                self.markers_Ascaled += A_binaryscaled
+
+                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
+                P_binaryscaled = torch.zeros_like(Pn)
+                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
+                self.markers_Pscaled += P_binaryscaled
+
+                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
+                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
+
+                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
+                self.markers_Asoftmax += (An / sumPerGene)
+       
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
     def guide(D):
-        """Placeholder guide (use AutoNormal externally)."""
         pass
 
 
 
 
 class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
-    """Semi-supervised Gamma model with fixed sample patterns.
-
-    Extends ``Gamma_NegBinomial_base`` by fixing a set of patterns over samples
-    and learning additional patterns. The fixed patterns are concatenated to
-    the learned ``P`` matrix during reconstruction.
-
-    Parameters
-    ----------
-    num_samples : int
-        Number of samples (rows in ``D``).
-    num_genes : int
-        Number of genes/features (columns in ``D``).
-    num_patterns : int
-        Number of additional patterns to learn.
-    fixed_patterns : array-like
-        Fixed patterns with shape ``(num_samples, num_fixed_patterns)``.
-    use_chisq : bool, optional
-        If True, adds a chi-squared loss term.
-    use_pois : bool, optional
-        If True, adds a Poisson log-likelihood term.
-    scale : float, optional
-        Scalar used as the second parameter to ``dist.Gamma``.
-    NB_probs : float, optional
-        Probability parameter for the Negative Binomial likelihood.
-    device : torch.device, optional
-        Device for parameters and tensors.
-    """
     def __init__(self,
                 num_samples,
                 num_genes,
@@ -366,7 +341,6 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
 
-        """Initialize the semi-supervised model with fixed sample patterns."""
         super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, scale, NB_probs, device) 
 
         ## This is the same as unsupervised but with a set of fixed P and A extended by this amount ##
@@ -378,7 +352,7 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
 
 
         #### Matrix A is patterns (supervised+unsupervised) x genes ####
-        self.loc_A = PyroParam(torch.rand(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.positive)        
+        self.loc_A = PyroParam(torch.rand(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype), constraint=dist.constraints.nonnegative)        
         self.best_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.best_locA = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
         self.sum_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype)
@@ -391,16 +365,18 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
         #### Fixed patterns are samples x patterns ####
         self.fixed_P = torch.tensor(fixed_patterns, device=self.device,dtype=default_dtype) # tensor, not updatable
 
-    def forward(self, D, U):
-        """Run one stochastic forward pass with fixed sample patterns.
 
-        Parameters
-        ----------
-        D : torch.Tensor
-            Observed count matrix with shape ``(num_samples, num_genes)``.
-        U : torch.Tensor
-            Per-entry scale/uncertainty for chi-squared computation.
-        """
+        self.markers_A = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_P = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Ascaled = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Pscaled = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+        self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
+        self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
+
+
+    def forward(self, D, U, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -449,17 +425,50 @@ class Gamma_NegBinomial_SSFixedSamples(Gamma_NegBinomial_base):
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
 
-        with torch.no_grad():
-            correction = P_total.max(axis=0).values
-            Pn = P_total / correction
-            An = A * correction.unsqueeze(1)
-            self.sum_A += An
-            self.sum_P += Pn
-            self.sum_A2 += torch.square(An)
-            self.sum_P2 += torch.square(Pn)
+        if samp:
+            with torch.no_grad():
+                #correction = P_total.max(axis=0).values
+                correction = P_total.sum(axis=0)
+
+                Pn = P_total / correction
+                An = A * correction.unsqueeze(1)
+                self.sum_A += An
+                self.sum_P += Pn
+                self.sum_A2 += torch.square(An)
+                self.sum_P2 += torch.square(Pn)
+
+
+                max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(A)
+                A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
+                self.markers_A += A_binary
+
+                max_pat_per_samp = P_total.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(P_total)
+                P_binary[torch.arange(P_total.shape[0]), max_pat_per_samp] = 1
+                self.markers_P += P_binary
+
+                max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
+                A_binaryscaled = torch.zeros_like(An)
+                A_binaryscaled[max_pat_per_gene_scaled, torch.arange(An.shape[1])] = 1
+                self.markers_Ascaled += A_binaryscaled
+
+                max_pat_per_samp_scaled = Pn.argmax(dim=1)  # shape: (Samp,)
+                P_binaryscaled = torch.zeros_like(Pn)
+                P_binaryscaled[torch.arange(Pn.shape[0]), max_pat_per_samp_scaled] = 1
+                self.markers_Pscaled += P_binaryscaled
+
+                sumPerPat = Pn.sum(dim=1)  # shape: (Samp,)
+                self.markers_Psoftmax += (Pn / sumPerPat.unsqueeze(1))
+
+                sumPerGene = An.sum(dim=0)  # shape: (Samp,)
+                self.markers_Asoftmax += (An / sumPerGene)
+       
+
+
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
 
 def guide(D):
-    """Placeholder guide (use AutoNormal externally)."""
     pass
+

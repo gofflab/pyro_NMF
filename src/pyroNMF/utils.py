@@ -1,16 +1,17 @@
-"""Utility functions for device selection and plotting."""
 
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
 
 def detect_device():
-    """Select an available PyTorch device.
-
-    Returns
-    -------
-    torch.device
-        ``cuda`` if available, otherwise ``mps`` if available, else ``cpu``.
+    """
+    Setup the device for PyTorch.
+    
+    Parameters:
+    - device: Device to run the model on (e.g., 'cpu', 'cuda', 'mps').
+    
+    Returns:
+    - device: The initialized device.
     """
 
     if torch.cuda.is_available():
@@ -24,24 +25,7 @@ def detect_device():
 
 
 
-def plot_grid(patterns, coords, nrows, ncols, size=2, savename = None):
-    """Plot spatial patterns on a grid of scatter plots.
-
-    Parameters
-    ----------
-    patterns : array-like
-        Pattern matrix with shape ``(n_samples, n_patterns)``.
-    coords : array-like
-        Spatial coordinates with shape ``(n_samples, 2)``.
-    nrows : int
-        Number of rows in the plot grid.
-    ncols : int
-        Number of columns in the plot grid.
-    size : float, optional
-        Marker size for scatter points.
-    savename : str or None, optional
-        If provided, saves the figure to this path.
-    """
+def plot_grid(patterns, coords, nrows, ncols, size=10, savename = None):
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*4, nrows*4))
     num_patterns = patterns.shape[1]
     x, y = coords[:,0], coords[:,1]
@@ -67,25 +51,7 @@ def plot_grid(patterns, coords, nrows, ncols, size=2, savename = None):
         plt.savefig(savename)
 
 
-def plot_grid_noAlpha(patterns, coords, nrows, ncols, s=4, savename = None):
-    """Plot spatial patterns without alpha scaling.
-
-    Parameters
-    ----------
-    patterns : array-like
-        Pattern matrix with shape ``(n_samples, n_patterns)``.
-    coords : Mapping or array-like
-        Spatial coordinates. If a mapping, expects ``coords['x']`` and
-        ``coords['y']``.
-    nrows : int
-        Number of rows in the plot grid.
-    ncols : int
-        Number of columns in the plot grid.
-    s : float, optional
-        Marker size for scatter points.
-    savename : str or None, optional
-        If provided, saves the figure to this path.
-    """
+def plot_grid_noAlpha(patterns, coords, nrows, ncols, s=10, savename = None):
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
     num_patterns = patterns.shape[1]
     x, y = coords['x'], coords['y']
@@ -108,32 +74,6 @@ def plot_grid_noAlpha(patterns, coords, nrows, ncols, s=4, savename = None):
 
 
 def plot_results(adata, nrows, ncols, which='best_P', s=4, a=1, scale_alpha = False, scale_values =False, savename = None, title=None):
-    """Plot patterns stored in an AnnData object.
-
-    Parameters
-    ----------
-    adata : anndata.AnnData
-        AnnData with spatial coordinates in ``obsm['spatial']`` and patterns
-        stored in ``obsm[which]``.
-    nrows : int
-        Number of rows in the plot grid.
-    ncols : int
-        Number of columns in the plot grid.
-    which : str, optional
-        Key in ``adata.obsm`` containing pattern matrix to plot.
-    s : float, optional
-        Marker size for scatter points.
-    a : float, optional
-        Base alpha for scatter points.
-    scale_alpha : bool, optional
-        If True, scale alpha by per-spot intensity.
-    scale_values : bool, optional
-        If True, clip color scale to 5th-95th percentile.
-    savename : str or None, optional
-        If provided, saves the figure to this path.
-    title : str or None, optional
-        Figure title.
-    """
     patterns = adata.obsm[which]
     coords = adata.obsm['spatial']
     fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
@@ -153,6 +93,7 @@ def plot_results(adata, nrows, ncols, which='best_P', s=4, a=1, scale_alpha = Fa
                 p = axes[r,c].scatter(x, y, c=patterns.iloc[:,i], s=s, alpha=a, vmin=pattern_min, vmax=pattern_max, cmap='viridis',edgecolors='none')
                 axes[r,c].set_yticklabels([])
                 axes[r,c].set_xticklabels([])
+                axes[r,c].set_title(patterns.columns[i])
                 fig.colorbar(p, ax=axes[r,c])
 
                 #axes[r,c].set_title(patterns.columns[i])
