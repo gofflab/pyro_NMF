@@ -1,3 +1,5 @@
+"""Legacy inference wrappers retained for backward compatibility."""
+
 import torch
 from pyroNMF.models.gamma_NB_newBase import Gamma_NegBinomial_base
 from pyroNMF.models.gamma_NB_new_SSfixedP import Gamma_NegBinomial_SSFixed
@@ -667,4 +669,3 @@ def run_nmf_exponential(data, num_patterns, num_steps=20000, device=None, NB_pro
     )
     pyro.clear_param_store()
     return result_anndata
-

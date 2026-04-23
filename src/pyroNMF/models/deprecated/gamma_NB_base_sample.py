@@ -1,3 +1,4 @@
+"""Deprecated Gamma-NB model with sampling summaries (kept for reference)."""
 #%%
 import pyro
 import pyro.distributions as dist
@@ -11,6 +12,7 @@ pyro.enable_validation(True)
 
 #%%
 class Gamma_NegBinomial_base(PyroModule):
+    """Deprecated Gamma-Negative Binomial model with sampling summaries."""
     def __init__(self,
                  num_genes,
                  num_samples,
@@ -19,7 +21,21 @@ class Gamma_NegBinomial_base(PyroModule):
                  device=torch.device('cpu')
                  #init_method="mean", # Options: (["mean", "svd", None]): TODOS
             ):
-        
+        """Initialize the deprecated model.
+
+        Parameters
+        ----------
+        num_genes : int
+            Number of genes/features (columns in ``D``).
+        num_samples : int
+            Number of samples (rows in ``D``).
+        num_patterns : int
+            Number of latent patterns to learn.
+        NB_probs : float, optional
+            Negative Binomial probability parameter.
+        device : torch.device, optional
+            Device for parameters and tensors.
+        """
         super().__init__()
 
         self.num_genes = num_genes
@@ -44,6 +60,15 @@ class Gamma_NegBinomial_base(PyroModule):
 
 
     def forward(self, D, samp = False):
+        """Run a forward pass of the model.
+
+        Parameters
+        ----------
+        D : torch.Tensor
+            Observed count matrix with shape ``(num_samples, num_genes)``.
+        samp : bool, optional
+            If True, accumulate sampled A/P values into running sums.
+        """
         # Nested plates for pixel-wise independence
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
@@ -70,10 +95,28 @@ class Gamma_NegBinomial_base(PyroModule):
 
     #%%
     def guide(D):
+        """Placeholder guide (not implemented)."""
         pass
 
 
     def plot_grid(self, patterns, coords, nrows, ncols, s=4, savename = None):
+        """Plot spatial patterns with alpha scaling.
+
+        Parameters
+        ----------
+        patterns : array-like
+            Pattern matrix with shape ``(n_samples, n_patterns)``.
+        coords : Mapping or array-like
+            Spatial coordinates; expects ``coords['x']`` and ``coords['y']``.
+        nrows : int
+            Number of rows in the plot grid.
+        ncols : int
+            Number of columns in the plot grid.
+        s : float, optional
+            Marker size for scatter points.
+        savename : str or None, optional
+            If provided, save the figure to this path.
+        """
         fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
         num_patterns = patterns.shape[1]
         x, y = coords['x'], coords['y']
@@ -103,6 +146,23 @@ class Gamma_NegBinomial_base(PyroModule):
 
     
     def plot_grid_noAlpha(self, patterns, coords, nrows, ncols, s=4, savename = None):
+        """Plot spatial patterns without alpha scaling.
+
+        Parameters
+        ----------
+        patterns : array-like
+            Pattern matrix with shape ``(n_samples, n_patterns)``.
+        coords : Mapping or array-like
+            Spatial coordinates; expects ``coords['x']`` and ``coords['y']``.
+        nrows : int
+            Number of rows in the plot grid.
+        ncols : int
+            Number of columns in the plot grid.
+        s : float, optional
+            Marker size for scatter points.
+        savename : str or None, optional
+            If provided, save the figure to this path.
+        """
         fig, axes = plt.subplots(nrows,ncols, figsize=(ncols*5, nrows*4))
         num_patterns = patterns.shape[1]
         x, y = coords['x'], coords['y']
