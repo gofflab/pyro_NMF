@@ -32,7 +32,6 @@ installation
 usage
 tutorial
 anndata
-legacy
 :::
 
 :::{toctree}
