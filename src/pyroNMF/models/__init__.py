@@ -15,6 +15,7 @@
 from . import expSingle_NB_models
 from . import gamma_NB_models
 from . import exp_NB_models
+from . import gammaSingle_NB_models
 #from .extras import gamma_NB_fixedAlphas
 #from . import gamma_NB_alphaPerGene
 #from . import gamma_NB_alphaPerPattern

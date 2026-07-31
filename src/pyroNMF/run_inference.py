@@ -1,6 +1,7 @@
 #from pyroNMF.models.deprecated.exp_pois_models_noNB import ExponentialPoisson_base
-import torch
-
+import gc
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 from pyroNMF.models.gamma_NB_models import (
     Gamma_NegBinomial_base,
     Gamma_NegBinomial_SSFixedGenes,
@@ -10,6 +11,11 @@ from pyroNMF.models.expSingle_NB_models import (
     ExponentialSingle_base,
     ExponentialSingle_SSFixedGenes,
     ExponentialSingle_SSFixedSamples
+)
+from pyroNMF.models.gammaSingle_NB_models import (
+    GammaSingle_base,
+    GammaSingle_SSFixedGenes,
+    GammaSingle_SSFixedSamples
 )
 from pyroNMF.models.exp_NB_models import (
     Exponential_NegBinomial_base,
@@ -26,7 +32,9 @@ from pyroNMF.models.exp_NB_models import (
 
 from pyroNMF.utils import detect_device, plot_grid, plot_grid_noAlpha
 from torch.utils.tensorboard import SummaryWriter
-import os
+
+import torch
+
 from datetime import datetime
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -80,7 +88,7 @@ default_dtype = torch.float32
 #    return coords
 
 
-def prepare_tensors(data, layer=None, uncertainty=None, scale=None, device=None, spatial=False):
+def prepare_tensors(data, layer=None, uncertainty='auto', scale=None, device=None, spatial=False):
 
     """
     Prepare and move tensors to the specified device.
@@ -129,12 +137,15 @@ def prepare_tensors(data, layer=None, uncertainty=None, scale=None, device=None,
 
     # Use 10% of D (clipped at 0.3) as default uncertainty
     if uncertainty is None:
+        U = None
+        print("Uncertainty is set to None, will not be used in model or loss calculations -- memory saving mode")
+    elif isinstance(uncertainty, str) and uncertainty == 'auto':
         U = (D * 0.1).clip(min=0.3).to(device)
         print("Using default uncertainty, 10% expression (clipped at 0.3)")
     else:
         U = torch.tensor(uncertainty, dtype=default_dtype).to(device)
         print("Using user-specified uncertainty")
-
+    
     # Use 2*std of data as default scale unless otherwise specified
     if scale is None:
         scale = torch.tensor((D.cpu().numpy().std()) * 2, dtype=default_dtype, device=device)
@@ -148,6 +159,8 @@ def prepare_tensors(data, layer=None, uncertainty=None, scale=None, device=None,
             raise ValueError("Spatial coordinates are not present in the data. Please provide spatial coordinates in obsm['spatial']")
         
         coords = data.obsm['spatial']
+        print(f"Using coords from data.obsm['spatial']")
+
         if coords.shape[1] != 2:
             raise ValueError("Spatial coordinates should have two columns named 'x' and 'y'")
     else:
@@ -158,7 +171,7 @@ def prepare_tensors(data, layer=None, uncertainty=None, scale=None, device=None,
 
 def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=False, use_pois=False, device=None,
                              fixed_patterns=None, model_type='gamma_unsupervised',
-                             supervision_type=None, optimizer=pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})):
+                             supervision_type=None, optimizer=pyro.optim.Adam({"lr": 0.1, "eps": 1e-08}), init_method='random', debug=False):
     """
     Setup the NMF model and optimizer.
     
@@ -184,7 +197,7 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
 
     n_cells, n_genes = D.shape[0], D.shape[1]
     shared_kwargs = dict(
-        use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device
+        use_chisq=use_chisq, use_pois=use_pois, NB_probs=NB_probs, device=device, init_method=init_method, debug=debug
     )
     gamma_kwargs = dict(**shared_kwargs, scale=scale)
 
@@ -262,6 +275,19 @@ def setup_model_and_optimizer(D, num_patterns, scale=1, NB_probs=0.5, use_chisq=
         model = cls_map[supervision_type](
             n_cells, n_genes, num_patterns, fixed_patterns=fixed_patterns, **shared_kwargs
         )
+
+    elif model_type == 'gammaSingle_unsupervised':
+        model = GammaSingle_base(n_cells, n_genes, num_patterns, **shared_kwargs)
+ 
+    elif model_type == 'gammaSingle_supervised':
+        cls_map = {
+            'fixed_genes':    GammaSingle_SSFixedGenes,
+            'fixed_samples':  GammaSingle_SSFixedSamples,
+        }
+        _assert_supervision_type(supervision_type, cls_map)
+        model = cls_map[supervision_type](
+            n_cells, n_genes, num_patterns, fixed_patterns=fixed_patterns, **shared_kwargs
+        )
  
     else:
         raise ValueError(
@@ -290,6 +316,16 @@ def _assert_supervision_type(supervision_type, cls_map):
     if supervision_type not in cls_map:
         raise ValueError("supervision_type must be 'fixed_genes' or 'fixed_samples'")
  
+
+def debug_param_store(step):
+    store = pyro.get_param_store()
+    total = 0
+    for name, val in store.items():
+        mb = val.numel() * val.element_size() / 1e6
+        total += mb
+        if mb > 10:
+            print(f"  {name}: {val.shape} = {mb:.1f} MB")
+    print(f"  Param store total: {total:.1f} MB, num params: {len(store)}")
 
 def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tensorboard_id=None, 
                       spatial=False, coords=None, plot_dims=None):
@@ -321,25 +357,46 @@ def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tenso
     if use_tensorboard_id is not None:
         writer = SummaryWriter(comment=use_tensorboard_id)
         print(f'Logging to Tensorboard {os.getcwd()}{writer.get_logdir()}')
-    
+
+    ended_early = False
     for step in range(1, num_burnin + num_sample_steps + 1):
         try:
             if step <= num_burnin+1:
-                loss = svi.step(D, U, samp=False)
+                if U is not False:
+                    loss = svi.step(D, U, samp=False)
+                else:
+                    loss = svi.step(D, samp=False)
             else:
-                loss = svi.step(D, U, samp=True)
+                if U is not False:
+                    loss = svi.step(D, U, samp=True)
+                else:
+                    loss = svi.step(D, samp=True)
+
         except ValueError as e:
             print(f"ValueError during iteration {step}: {e}")
+            ended_early = True
+            print("#####################################################")
+            print("#### WARNING SVI STEP ERRORED, EARLY TERMINATION ####")
+            print("#####################################################")
+
             break
         
         if step % 10 == 0:
             losses.append(loss)
             steps.append(step)
             #print(svi.optim.get_state())
-            log_adam_state_all(writer, svi, step, log_every=10)
+            #log_adam_state_all(writer, svi, step, log_every=10)
         
         if step % 100 == 0:
             print(f"Iteration {step}, ELBO loss: {loss}")
+
+        #if step % 500 == 0:
+            #debug_cuda_tensors(step)
+            #debug_param_store(step)
+            #state = svi.optim.get_state().detach()
+            #print(f"Step {step}: {len(state)} optimizer states")
+            #for k, v in state.items():
+            #    print(f"  {k}: {[s.shape for s in v.values() if hasattr(s, 'shape')]}")
         
         if writer is not None:
             _log_tensorboard_metrics(writer, model, D, step, loss, spatial, coords, plot_dims)
@@ -348,75 +405,77 @@ def run_inference_loop(svi, model, D, U, num_burnin, num_sample_steps, use_tenso
     runtime = round((end_time - start_time).total_seconds())
     print(f'Runtime: {runtime} seconds')
     
-    return losses, steps, runtime, writer
+    return losses, steps, runtime, writer, ended_early
 
 def log_adam_state_all(writer, svi, step, tag_prefix="OptimAdam", log_every=1):
     if writer is None:
         return
     if (step % log_every) != 0:
         return
- 
-    state = svi.optim.get_state()
- 
-    for name, d in state.items():
-        if "param_groups" not in d or "state" not in d:
-            continue
-        if len(d["param_groups"]) == 0 or len(d["state"]) == 0:
-            continue
- 
-        g0 = d["param_groups"][0]
-        if "lr" not in g0 or "betas" not in g0 or "eps" not in g0:
-            continue
- 
-        lr = float(g0["lr"])
-        beta1, beta2 = g0["betas"]
-        eps = float(g0["eps"])
- 
-        safe_name = str(name).replace(":", "_").replace(" ", "_").replace("/", "_")
-        base = f"{tag_prefix}/{safe_name}"
- 
-        for param_id, st in d["state"].items():
-            if "step" not in st:
+    
+    with torch.no_grad():
+        state = svi.optim.get_state()
+        for name, d in state.items():
+            if "param_groups" not in d or "state" not in d:
                 continue
-            t = int(st["step"].item())
- 
-            bc1 = 1.0 - (beta1 ** t)
-            bc2 = 1.0 - (beta2 ** t)
- 
-            sub = base if len(d["state"]) == 1 else f"{base}/param{param_id}"
- 
-            m = st.get("exp_avg", None)
-            v = st.get("exp_avg_sq", None)
- 
-            if m is not None:
-                m2_mean = (m * m).mean()
-                writer.add_scalar(f"{sub}/m_rms",  float(torch.sqrt(m2_mean).item()), step)
-                writer.add_scalar(f"{sub}/m_norm", float(torch.linalg.vector_norm(m).item()), step)
- 
-            if v is not None:
-                v2_mean = (v * v).mean()
-                writer.add_scalar(f"{sub}/v_rms",  float(torch.sqrt(v2_mean).item()), step)
-                writer.add_scalar(f"{sub}/v_norm", float(torch.linalg.vector_norm(v).item()), step)
- 
-                eff = lr * (bc2 ** 0.5) / bc1 / (v.sqrt() + eps)
-                writer.add_scalar(f"{sub}/efflr_mean", float(eff.mean().item()), step)
-                writer.add_scalar(f"{sub}/efflr_min",  float(eff.min().item()), step)
-                writer.add_scalar(f"{sub}/efflr_max",  float(eff.max().item()), step)
- 
-                def _prep(x):
-                    x = x.detach().flatten()
-                    if x.numel() > 200000:
-                        idx = torch.randperm(x.numel(), device=x.device)[:200000]
-                        x = x[idx]
-                    return x
- 
-                eff_log10 = torch.log10(eff.clamp_min(1e-30))
-                eff_log10_1 = _prep(eff_log10)  # noqa: F841  (kept for parity)
-                plt.hist(eff_log10.detach().cpu().numpy().flatten(), bins=30)
-                writer.add_figure("efflr_log10_hist", plt.gcf(), step)
- 
-            writer.add_scalar(f"{sub}/adam_step", float(t), step)
- 
+            if len(d["param_groups"]) == 0 or len(d["state"]) == 0:
+                continue
+    
+            g0 = d["param_groups"][0]
+            if "lr" not in g0 or "betas" not in g0 or "eps" not in g0:
+                continue
+    
+            lr = float(g0["lr"])
+            beta1, beta2 = g0["betas"]
+            eps = float(g0["eps"])
+    
+            safe_name = str(name).replace(":", "_").replace(" ", "_").replace("/", "_")
+            base = f"{tag_prefix}/{safe_name}"
+    
+            for param_id, st in d["state"].items():
+                if "step" not in st:
+                    continue
+                t = int(st["step"].item())
+    
+                bc1 = 1.0 - (beta1 ** t)
+                bc2 = 1.0 - (beta2 ** t)
+    
+                sub = base if len(d["state"]) == 1 else f"{base}/param{param_id}"
+    
+                m = st.get("exp_avg", None)
+                v = st.get("exp_avg_sq", None)
+    
+                if m is not None:
+                    m2_mean = (m * m).mean()
+                    writer.add_scalar(f"{sub}/m_rms",  float(torch.sqrt(m2_mean).item()), step)
+                    writer.add_scalar(f"{sub}/m_norm", float(torch.linalg.vector_norm(m).item()), step)
+    
+                if v is not None:
+                    v2_mean = (v * v).mean()
+                    writer.add_scalar(f"{sub}/v_rms",  float(torch.sqrt(v2_mean).item()), step)
+                    writer.add_scalar(f"{sub}/v_norm", float(torch.linalg.vector_norm(v).item()), step)
+    
+                    eff = lr * (bc2 ** 0.5) / bc1 / (v.sqrt() + eps)
+                    writer.add_scalar(f"{sub}/efflr_mean", float(eff.mean().item()), step)
+                    writer.add_scalar(f"{sub}/efflr_min",  float(eff.min().item()), step)
+                    writer.add_scalar(f"{sub}/efflr_max",  float(eff.max().item()), step)
+    
+                    def _prep(x):
+                        x = x.detach().flatten()
+                        if x.numel() > 200000:
+                            idx = torch.randperm(x.numel(), device=x.device)[:200000]
+                            x = x[idx]
+                        return x
+    
+                    eff_log10 = torch.log10(eff.clamp_min(1e-30))
+                    eff_log10_1 = _prep(eff_log10)  # noqa: F841  (kept for parity)
+                    plt.hist(eff_log10.detach().cpu().numpy().flatten(), bins=30)
+                    writer.add_figure("efflr_log10_hist", plt.gcf(), step, close=True)
+                    plt.close() 
+
+    
+                writer.add_scalar(f"{sub}/adam_step", float(t), step)
+    
  
 def _log_tensorboard_metrics(writer, model, D, step, loss, spatial=False, coords=None, plot_dims=None):
     """
@@ -441,17 +500,19 @@ def _log_tensorboard_metrics(writer, model, D, step, loss, spatial=False, coords
     if hasattr(model, "pois"):
         writer.add_scalar("Poisson loss",      float(getattr(model, "pois")),          step)
         writer.add_scalar("Pois / ELBO ratio", abs(float(getattr(model, "pois"))) / abs(loss), step)
-    writer.flush()
+    #writer.flush()
  
     if step % 50 == 0 or step == 1:
         _log_param_figures(writer, model, step, spatial, coords, plot_dims)
-        _log_reconstructed_figures(writer, model, D, step)
+        #_log_reconstructed_figures(writer, model, D, step)
         _log_memory(writer, step)
  
     if step % 100 == 0 and hasattr(model, "D_reconstructed"):
         plt.figure()
         plt.hist(model.D_reconstructed.detach().cpu().numpy().flatten(), bins=30)
-        writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
+        writer.add_figure("D_reconstructed_hist", plt.gcf(), step, close=True)
+        plt.close()   
+
  
  
 def _log_param_figures(writer, model, step, spatial, coords, plot_dims):
@@ -465,14 +526,17 @@ def _log_param_figures(writer, model, step, spatial, coords, plot_dims):
                 try:
                     vals = pyro.param(param_name).detach().cpu().numpy()
                     plot_grid(vals, coords, plot_dims[0], plot_dims[1], savename=None)
-                    writer.add_figure(param_name, plt.gcf(), step)
+                    writer.add_figure(param_name, plt.gcf(), step, close=True)
+                    plt.close()  
                 except Exception:
                     pass
  
         if hasattr(model, "P"):
             try:
                 plot_grid(model.P.detach().cpu().numpy(), coords, plot_dims[0], plot_dims[1], savename=None)
-                writer.add_figure("current sampled P", plt.gcf(), step)
+                writer.add_figure("current sampled P", plt.gcf(), step, close=True)
+                plt.close()  
+
             except Exception:
                 pass
  
@@ -481,14 +545,18 @@ def _log_param_figures(writer, model, step, spatial, coords, plot_dims):
         if param_name in store:
             plt.figure()
             plt.hist(pyro.param(param_name).detach().cpu().numpy().flatten(), bins=30)
-            writer.add_figure(f"{param_name}_hist", plt.gcf(), step)
+            writer.add_figure(f"{param_name}_hist", plt.gcf(), step, close=True)
+            plt.close() 
+
  
     # Heatmaps
     for param_name in ('alpha_P', 'alpha_A'):
         if param_name in store:
             plt.figure()
             sns.heatmap(pyro.param(param_name).detach().cpu(), annot=True, fmt=".2f", cmap="viridis")
-            writer.add_figure(f"{param_name}_hist", plt.gcf(), step)
+            writer.add_figure(f"{param_name}_hist", plt.gcf(), step, close=True)
+            plt.close()  
+
  
  
 def _log_reconstructed_figures(writer, model, D, step):
@@ -503,6 +571,8 @@ def _log_reconstructed_figures(writer, model, D, step):
     plt.figure()
     plt.hist(D_reconstructed.flatten(), bins=30)
     writer.add_figure("D_reconstructed_hist", plt.gcf(), step)
+    plt.close() 
+
  
     try:
         writer.add_scalar("D_reconstructed_mean", float(D_reconstructed.mean()), step)
@@ -518,7 +588,7 @@ def _log_reconstructed_figures(writer, model, D, step):
         D_flat    = D_tensor.reshape(D_tensor.shape[0], -1) if D_tensor.ndim > 2 else D_tensor
         D_obs_flat = (D_obs.reshape(D_obs.shape[0], -1) if D_obs.ndim > 2 else D_obs) if D_obs is not None else None
  
-        means = D_flat.mean(dim=0)
+        means = D_flat.mean(dim=0) # check about means being detached
         vars_ = D_flat.var(dim=0, unbiased=False)
  
         eps     = torch.finfo(means.dtype).eps
@@ -537,6 +607,8 @@ def _log_reconstructed_figures(writer, model, D, step):
             plt.xscale("log")
             plt.yscale("log")
             writer.add_figure("D_reconstructed_mean_cov", plt.gcf(), step)
+            plt.close() 
+
  
         if D_obs_flat is not None:
             try:
@@ -564,7 +636,9 @@ def _log_reconstructed_figures(writer, model, D, step):
  
                     fig.suptitle("Per-gene residuals (expected vs observed)", y=1.02)
                     fig.tight_layout()
-                    writer.add_figure("D_reconstructed_mean_cov/expected_vs_observed", fig, step)
+                    writer.add_figure("D_reconstructed_mean_cov/expected_vs_observed", fig, step, close=True)
+                    plt.close() 
+
             except Exception:
                 pass
     except Exception:
@@ -656,13 +730,22 @@ def _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_n
     # ------------------------------------------------------------------
     if "loc_P" in store:
         arr = pyro.param("loc_P").detach().cpu().numpy()
-        result_anndata.obsm["loc_P"] = obs_df(arr, arr.shape[1])
-        print("Saving loc_P in anndata.obsm['loc_P']")
+        if arr.ndim == 2:
+            result_anndata.obsm["loc_P"] = obs_df(arr, arr.shape[1])
+            print("Saving loc_P in anndata.obsm['loc_P']")
+        else:
+            result_anndata.uns['loc_P'] = arr.item()
+            print("Saving loc_P in anndata.uns['loc_P']")
  
     if "loc_A" in store:
         arr = pyro.param("loc_A").detach().cpu().numpy().T
-        result_anndata.varm["loc_A"] = var_df(arr, arr.shape[1])
-        print("Saving loc_A in anndata.varm['loc_A']")
+        if arr.ndim == 2:
+            result_anndata.varm["loc_A"] = var_df(arr, arr.shape[1])
+            print("Saving loc_A in anndata.varm['loc_A']")
+        else:
+            result_anndata.uns['loc_A'] = arr.item()
+            print("Saving loc_A in anndata.uns['loc_A']")
+ 
  
     # ------------------------------------------------------------------
     # Variational parameters: alpha (Gamma models)
@@ -678,16 +761,27 @@ def _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_n
     # ------------------------------------------------------------------
     # Variational parameters: scale scalars (Exponential models)
     # ------------------------------------------------------------------
+
     if "scale_P" in store:
-        val = pyro.param("scale_P").detach().cpu().item()
-        result_anndata.uns["scale_P"] = val
-        print(f"Saving scale_P = {val} in anndata.uns['scale_P']")
+        arr = pyro.param("scale_P").detach().cpu().numpy()
+        if arr.ndim == 2:
+            result_anndata.obsm["scale_P"] = obs_df(arr, arr.shape[1])
+            print("Saving scale_P in anndata.obsm['scale_P']")
+        else:
+            result_anndata.uns['scale_P'] = arr.item()
+            print("Saving scale_P in anndata.uns['scale_P']")
  
     if "scale_A" in store:
-        val = pyro.param("scale_A").detach().cpu().item()
-        result_anndata.uns["scale_A"] = val
-        print(f"Saving scale_A = {val} in anndata.uns['scale_A']")
+        arr = pyro.param("scale_A").detach().cpu().numpy().T
+        if arr.ndim == 2:
+            result_anndata.varm["scale_A"] = var_df(arr, arr.shape[1])
+            print("Saving scale_A in anndata.varm['scale_A']")
+        else:
+            result_anndata.uns['scale_A'] = arr.item()
+            print("Saving scale_A in anndata.uns['scale_A']")
  
+
+
     # ------------------------------------------------------------------
     # Last sampled A / P
     # ------------------------------------------------------------------
@@ -769,44 +863,44 @@ def _detect_and_save_parameters(result_anndata, model, settings, fixed_pattern_n
     # ------------------------------------------------------------------
     # Best total A / P (supervised: merge fixed + best)
     # ------------------------------------------------------------------
-    if "fixed_P" in result_anndata.obsm and "best_P" in result_anndata.obsm:
-        result_anndata.obsm["best_P_total"] = result_anndata.obsm["fixed_P"].merge(
-            result_anndata.obsm["best_P"], left_index=True, right_index=True
-        )
-        print("Saving best_P_total in anndata.obsm['best_P_total']")
+    #if "fixed_P" in result_anndata.obsm and "best_P" in result_anndata.obsm:
+    #    result_anndata.obsm["best_P_total"] = result_anndata.obsm["fixed_P"].merge(
+    #        result_anndata.obsm["best_P"], left_index=True, right_index=True
+    #    )
+    #    print("Saving best_P_total in anndata.obsm['best_P_total']")
  
-    if "fixed_A" in result_anndata.varm and "best_A" in result_anndata.varm:
-        result_anndata.varm["best_A_total"] = result_anndata.varm["fixed_A"].merge(
-            result_anndata.varm["best_A"], left_index=True, right_index=True
-        )
-        print("Saving best_A_total in anndata.varm['best_A_total']")
+    #if "fixed_A" in result_anndata.varm and "best_A" in result_anndata.varm:
+    #    result_anndata.varm["best_A_total"] = result_anndata.varm["fixed_A"].merge(
+    #        result_anndata.varm["best_A"], left_index=True, right_index=True
+    #    )
+    #    print("Saving best_A_total in anndata.varm['best_A_total']")
  
     # ------------------------------------------------------------------
     # Scaled A / P  (normalise patterns to sum=1, absorb scale into A)
     # ------------------------------------------------------------------
     # --- best ---
-    P_to_scale = result_anndata.obsm.get("best_P_total", result_anndata.obsm.get("best_P"))
-    if P_to_scale is not None:
-        P_scaled = P_to_scale.div(P_to_scale.sum(axis=0), axis=1)
-        result_anndata.obsm["best_P_scaled"] = P_scaled
-        print("Saving best_P_scaled in anndata.obsm['best_P_scaled']")
+    #P_to_scale = result_anndata.obsm.get("best_P_total", result_anndata.obsm.get("best_P"))
+    #if P_to_scale is not None:
+    #    P_scaled = P_to_scale.div(P_to_scale.sum(axis=0), axis=1)
+    #    result_anndata.obsm["best_P_scaled"] = P_scaled
+    #    print("Saving best_P_scaled in anndata.obsm['best_P_scaled']")
  
-        A_to_adjust = result_anndata.varm.get("best_A_total", result_anndata.varm.get("best_A"))
-        if A_to_adjust is not None:
-            result_anndata.varm["best_A_scaled"] = A_to_adjust.multiply(P_to_scale.sum(axis=0), axis=1)
-            print("Saving best_A_scaled in anndata.varm['best_A_scaled']")
+    #    A_to_adjust = result_anndata.varm.get("best_A_total", result_anndata.varm.get("best_A"))
+    #    if A_to_adjust is not None:
+    #        result_anndata.varm["best_A_scaled"] = A_to_adjust.multiply(P_to_scale.sum(axis=0), axis=1)
+    #        print("Saving best_A_scaled in anndata.varm['best_A_scaled']")
  
     # --- last ---
-    P_to_scale = result_anndata.obsm.get("P_total", result_anndata.obsm.get("last_P"))
-    if P_to_scale is not None:
-        P_scaled = P_to_scale.div(P_to_scale.sum(axis=0), axis=1)
-        result_anndata.obsm["last_P_scaled"] = P_scaled
-        print("Saving last_P_scaled in anndata.obsm['last_P_scaled']")
+    #P_to_scale = result_anndata.obsm.get("P_total", result_anndata.obsm.get("last_P"))
+    #if P_to_scale is not None:
+    #    P_scaled = P_to_scale.div(P_to_scale.sum(axis=0), axis=1)
+    #    result_anndata.obsm["last_P_scaled"] = P_scaled
+    #    print("Saving last_P_scaled in anndata.obsm['last_P_scaled']")
  
-        A_to_adjust = result_anndata.varm.get("A_total", result_anndata.varm.get("last_A"))
-        if A_to_adjust is not None:
-            result_anndata.varm["last_A_scaled"] = A_to_adjust.multiply(P_to_scale.sum(axis=0), axis=1)
-            print("Saving last_A_scaled in anndata.varm['last_A_scaled']")
+    #    A_to_adjust = result_anndata.varm.get("A_total", result_anndata.varm.get("last_A"))
+    #    if A_to_adjust is not None:
+    #        result_anndata.varm["last_A_scaled"] = A_to_adjust.multiply(P_to_scale.sum(axis=0), axis=1)
+    #        print("Saving last_A_scaled in anndata.varm['last_A_scaled']")
  
     # ------------------------------------------------------------------
     # Running sums and variances (for posterior mean / uncertainty)
@@ -916,6 +1010,7 @@ def save_results_to_anndata(result_anndata, model, losses, steps, runtime, scale
         index=list(settings.keys()), 
         columns=["settings"]
     )
+
     
     return result_anndata
 
@@ -959,11 +1054,11 @@ def create_settings_dict(num_patterns, num_total_steps, num_sample_steps, device
 
 
 def run_nmf(
-    data, num_patterns, layer=None, uncertainty=None, fixed_patterns=None,
+    data, num_patterns, layer=None, uncertainty='auto', fixed_patterns=None,
     num_burnin=1000, num_sample_steps=20000, device=None,
     NB_probs=0.5, use_chisq=False, use_pois=False, use_tensorboard_id=None,
     spatial=False, plot_dims=None, scale=None, model_family=None,
-    supervision_type=None, model=None,
+    supervision_type=None, model=None, init_method='random', debug=False,
     optimizer=pyro.optim.Adam({"lr": 0.1, "eps": 1e-08})
 ):
     """
@@ -993,7 +1088,7 @@ def run_nmf(
     - result_anndata: AnnData object with all results and metadata
     """
     D, U, scale, device, coords = prepare_tensors(data, layer, uncertainty, scale, device, spatial)
- 
+    print(f"U is {U}")
     # regardless of which branch (supervised / unsupervised) is taken below.
     fixed_pattern_names   = None
     fixed_patterns_tensor = None
@@ -1008,8 +1103,7 @@ def run_nmf(
         model_type = f'{model_family}_unsupervised'
         model, guide, svi = setup_model_and_optimizer(
             D, num_patterns, scale, NB_probs, use_chisq, use_pois,
-            device, model_type=model_type, optimizer=optimizer
-        )
+            device, model_type=model_type, init_method=init_method, optimizer=optimizer, debug=debug)
     else:
         print('Using semisupervised mode')
         # ---- Supervised ----
@@ -1022,10 +1116,10 @@ def run_nmf(
         model, guide, svi = setup_model_and_optimizer(
             D, num_patterns, scale, NB_probs, use_chisq, use_pois,
             device, fixed_patterns_tensor, model_type, supervision_type,
-            optimizer=optimizer
+            optimizer=optimizer, init_method=init_method, debug=debug
         )
  
-    losses, steps, runtime, writer = run_inference_loop(
+    losses, steps, runtime, writer, ended_early = run_inference_loop(
         svi, model, D, U, num_burnin, num_sample_steps,
         use_tensorboard_id, spatial, coords, plot_dims
     )
@@ -1043,7 +1137,89 @@ def run_nmf(
         num_learned_patterns=num_patterns,
         supervised=supervision_type,
     )
+
+    result_anndata.uns["ended_early"] = ended_early
+    result_anndata.uns["completed"] = not ended_early
+    #result_anndata.uns["last_iteration"] = step
+
+
+    for attr in ['best_A','best_P','sum_A','sum_P','sum_A2','sum_P2',
+             'markers_A','markers_P','markers_Ascaled','markers_Pscaled',
+             'markers_Asoftmax','markers_Psoftmax','A','P',
+             'D_reconstructed','A_total','P_total']:
+        if hasattr(model, attr):
+            print(f'Setting attr {attr} to None')
+            setattr(model, attr, None)
  
+    del svi, model, guide, optimizer
+    
+    gc.collect()
+
     pyro.clear_param_store()
+
+    # Explicitly close any writers
+    if 'writer' in locals() and writer is not None:
+        print('NOTE HERE: clearing writer')
+        writer.close()
+
+    gc.collect()
+    gc.collect()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    #print(gc.get_referrers(model))
+    #print(gc.get_referrers(optimizer))
+
+    # next step close writer
+
     return result_anndata
  
+
+
+'''
+def find_tensor_owners():
+    """Inspects live objects to find what is referencing tensors."""
+    tensors = [obj for obj in gc.get_objects() if torch.is_tensor(obj)]
+    print(f"Total tensors alive: {len(tensors)}")
+    
+    # Check for Pyro's global parameter store specifically
+    import pyro
+    store = pyro.get_param_store()
+    print(f"Pyro param store size: {len(store)}")
+    
+    # Find objects that hold a reference to any of these tensors
+    for i, t in enumerate(tensors[:10]):  # Check first 10
+        referrers = gc.get_referrers(t)
+        print(f"Tensor {i} ({t.shape}) is referenced by:")
+        for r in referrers:
+            # Print type and a bit of info, but avoid printing huge objects
+            print(f"  -> {type(r)}")
+            # If it's a dict, it might be a __dict__ of an object
+            if isinstance(r, dict):
+                # Try to find what this dict belongs to
+                for obj in gc.get_objects():
+                    if getattr(obj, "__dict__", None) is r:
+                        print(f"     (Belongs to: {type(obj)})")
+
+find_tensor_owners()
+
+
+import gc
+
+def find_leaking_container():
+    tensors = [obj for obj in gc.get_objects() if torch.is_tensor(obj)]
+    for t in tensors:
+        referrers = gc.get_referrers(t)
+        for r in referrers:
+            # Print type and a bit of info, but avoid printing huge objects
+            print(f"  -> {type(r)}")
+            # If it's a dict, it might be a __dict__ of an object
+            if isinstance(r, dict):
+                # Search globals to see if this dict is a known variable
+                for name, value in globals().items():
+                    if value is r:
+                        print(f"Found leaking dict referenced by global variable: {name}")
+find_leaking_container()
+
+'''

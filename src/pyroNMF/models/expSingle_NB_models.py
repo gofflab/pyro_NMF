@@ -6,7 +6,10 @@ from pyro.nn import PyroModule
 from pyro.nn.module import PyroParam
 import torch
 import matplotlib.pyplot as plt
+import gc
 import numpy as np
+from pyroNMF.utils import debug_cuda_tensors
+
 
 #%% Enable Validations
 pyro.enable_validation(True)
@@ -23,8 +26,9 @@ class ExponentialSingle_base(PyroModule):
                 use_pois = False,
                 #scale = 1,
                 NB_probs = 0.5,
-                device=torch.device('cpu')
-                 #init_method="mean", # Options: (["mean", "svd", None]): TODOS
+                device=torch.device('cpu'),
+                init_method="ones", # placeholder, not used
+                debug=False
             ):
     
         super().__init__()
@@ -84,7 +88,13 @@ class ExponentialSingle_base(PyroModule):
         #### P parameter for Exponential to Populate P Matrix ####
         self.scale_P = PyroParam(torch.tensor(1.0, device=self.device), constraint=dist.constraints.nonnegative)
 
-    def forward(self, D, U, samp=False):
+        print("Initialized tensors")
+        if debug:
+            debug_cuda_tensors(0) # Call this at the start to check initial memory usage
+
+
+    def forward(self, D, U=None, samp=False):
+        #print(f'Uncertainty is {U}')
 
         self.iter += 1 # keep a running total of iterations
 
@@ -92,65 +102,66 @@ class ExponentialSingle_base(PyroModule):
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
                 A = pyro.sample("A", dist.Exponential(self.scale_A)) # sample A from Exponential
-        self.A = A # save A to model
+        self.A = A.detach().clone() # save A to model
 
         # Nested plates for pixel-wise independence
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
                 P = pyro.sample("P", dist.Exponential(self.scale_P)) # sample P from Exponential
-        self.P = P # save P to model
+        self.P = P.detach().clone() # save P to model
 
         # D_reconstucted is samples x genes; calculated as the product of P and A
         D_reconstructed = torch.matmul(P, A)  # (samples x genes)
-        self.D_reconstructed = D_reconstructed # save D_reconstructed to model
+        self.D_reconstructed = D_reconstructed.detach()  # save D_reconstructed to model
 
         # Calculate chi squared
-        chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-        self.chi2  = chi2
-        theta = self.D_reconstructed
-        poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-        self.pois  = poisL
+        if U is not None:
+            chi2 = torch.sum((D_reconstructed-D)**2/U**2)
+            self.chi2  = chi2.item()
+        
+            if chi2 < self.best_chisq: # if this is a better chi squared, save it
+                self.best_chisq = chi2.item()
+                self.best_chisq_iter = self.iter
+                self.best_A = A.detach().clone()
+                self.best_P = P.detach().clone()
+                self.best_scaleA = self.scale_A.detach().clone()
+                self.best_scaleP = self.scale_P.detach().clone()
 
-        if chi2 < self.best_chisq: # if this is a better chi squared, save it
-            self.best_chisq = chi2
-            self.best_chisq_iter = self.iter
-            self.best_A = A
-            self.best_P = P
-            self.best_scaleA = self.scale_A
-            self.best_scaleP = self.scale_P
-
-            
-        # Include chi squared loss in the model
-        if self.use_chisq:
-            pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
+                
+            # Include chi squared loss in the model
+            if self.use_chisq:
+                pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
 
         if self.use_pois:
             # Error Model Poisson
             theta = self.D_reconstructed
             poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
+            self.pois  = poisL.item()
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
      
         if samp:
             with torch.no_grad():
+                curr_P = self.P 
+                curr_A = self.A
+
                 #correction = P.max(axis=0).values
-                correction = P.sum(axis=0)
-                Pn = P / correction
-                An = A * correction.unsqueeze(1)
+                correction = curr_P.sum(axis=0)
+                Pn = curr_P / correction
+                An = curr_A * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn) 
 
-                
-                max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
-                A_binary = torch.zeros_like(A)
-                A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
+                max_pat_per_gene = curr_A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(curr_A)
+                A_binary[max_pat_per_gene, torch.arange(curr_A.shape[1])] = 1
                 self.markers_A += A_binary
 
-                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
-                P_binary = torch.zeros_like(P)
-                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
+                max_pat_per_samp = curr_P.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(curr_P)
+                P_binary[torch.arange(curr_P.shape[0]), max_pat_per_samp] = 1
                 self.markers_P += P_binary
 
                 max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
@@ -168,7 +179,6 @@ class ExponentialSingle_base(PyroModule):
 
                 sumPerGene = An.sum(dim=0)  # shape: (Samp,)
                 self.markers_Asoftmax += (An / sumPerGene)
-       
 
         pyro.sample("D", dist.NegativeBinomial(D_reconstructed, probs=self.NB_probs).to_event(2), obs=D) 
 
@@ -186,15 +196,17 @@ class ExponentialSingle_SSFixedGenes(ExponentialSingle_base):
                 use_pois = False,
                 #scale = 1,
                 NB_probs = 0.5,
-                device=torch.device('cpu')
-                 #init_method="mean", # Options: (["mean", "svd", None]): TODOS
+                device=torch.device('cpu'),
+                init_method="ones", # placeholder, unused
+                debug=False
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
+        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device,init_method,debug=debug) 
 
         ## This is the same as unsupervised but with a set of fixed A, and P extended by this amount ##
         self.fixed_patterns = fixed_patterns # of shape genes x fixed patterns
         self.num_fixed_patterns = fixed_patterns.shape[1]
+
         print(f"################# Running ExponentialSingle Model with fixed genes #################")
         print(f"Fixing {self.num_fixed_patterns} patterns")
 
@@ -219,7 +231,13 @@ class ExponentialSingle_SSFixedGenes(ExponentialSingle_base):
         self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
         self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
 
-    def forward(self, D, U, samp=False):
+        print("Updated initialized tensors to reflect fixed genes")
+
+        if debug:
+            debug_cuda_tensors(0) # Call this at the start to check initial memory usage
+
+
+    def forward(self, D, U=None, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -227,40 +245,42 @@ class ExponentialSingle_SSFixedGenes(ExponentialSingle_base):
         with pyro.plate("patterns", self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
                 A = pyro.sample("A", dist.Exponential(self.scale_A))
-        self.A = A
+        self.A = A.detach().clone()
 
         # Nested plates for pixel-wise independence
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_fixed_patterns + self.num_patterns, dim = -1):
                 P = pyro.sample("P", dist.Exponential(self.scale_P)) # sample P from Exponential
-        self.P = P
+        self.P = P.detach().clone()
 
         A_total = torch.cat((self.fixed_A.T, A), dim=0)
-        self.A_total = A_total # save P_total
+        self.A_total = A_total.detach().clone() # save A_total
 
         # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
         D_reconstructed = torch.matmul(P, A_total)  # (samples x genes)
-        self.D_reconstructed = D_reconstructed # save D_reconstructed
+        self.D_reconstructed = D_reconstructed.detach().clone() # save D_reconstructed
+
+
         
-        # Calculate chi squared
-        chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-        self.chi2  = chi2
-        theta = self.D_reconstructed
-        poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-        self.pois  = poisL
+        if U is not None:
+            # Calculate chi squared
+            chi2 = torch.sum((D_reconstructed-D)**2/U**2)
+            self.chi2  = chi2.item()
+            theta = self.D_reconstructed
+            poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
+            self.pois  = poisL.item()
 
-        if chi2 < self.best_chisq: # if this is a better chi squared, save it
-            self.best_chisq = chi2
-            self.best_chisq_iter = self.iter
-            self.best_A = A
-            self.best_P = P
-            self.best_scaleA = self.scale_A
-            self.best_scaleP = self.scale_P
+            if chi2 < self.best_chisq: # if this is a better chi squared, save it
+                self.best_chisq = chi2.item()
+                self.best_chisq_iter = self.iter
+                self.best_A = A.detach().clone()
+                self.best_P = P.detach().clone()
+                self.best_scaleA = self.scale_A.detach().clone()
+                self.best_scaleP = self.scale_P.detach().clone()
 
-
-        # Include chi squared loss in the model
-        if self.use_chisq:
-            pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
+            # Include chi squared loss in the model
+            if self.use_chisq:
+                pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
 
         if self.use_pois:
             # Error Model Poisson
@@ -271,24 +291,27 @@ class ExponentialSingle_SSFixedGenes(ExponentialSingle_base):
         
         if samp:
             with torch.no_grad():
+                curr_A = A_total.detach()
+                curr_P = P.detach()
+
                 #correction = P.max(axis=0).values
-                correction = P.sum(axis=0)
-                Pn = P / correction
-                An = A_total * correction.unsqueeze(1)
+                correction = curr_P.sum(axis=0)
+                Pn = curr_P / correction
+                An = curr_A * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn)
 
 
-                max_pat_per_gene = A_total.argmax(dim=0)  # shape: (Gene,)
-                A_binary = torch.zeros_like(A_total)
-                A_binary[max_pat_per_gene, torch.arange(A_total.shape[1])] = 1
+                max_pat_per_gene = curr_A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(curr_A)
+                A_binary[max_pat_per_gene, torch.arange(curr_A.shape[1])] = 1
                 self.markers_A += A_binary
 
-                max_pat_per_samp = P.argmax(dim=1)  # shape: (Samp,)
-                P_binary = torch.zeros_like(P)
-                P_binary[torch.arange(P.shape[0]), max_pat_per_samp] = 1
+                max_pat_per_samp = curr_P.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(curr_P)
+                P_binary[torch.arange(curr_P.shape[0]), max_pat_per_samp] = 1
                 self.markers_P += P_binary
 
                 max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)
@@ -326,11 +349,12 @@ class ExponentialSingle_SSFixedSamples(ExponentialSingle_base):
                 use_pois = False,
                 #scale = 1,
                 NB_probs = 0.5,
-                device=torch.device('cpu')
-                 #init_method="mean", # Options: (["mean", "svd", None]): TODOS
+                device=torch.device('cpu'),
+                init_method="ones", # placeholder, unused
+                debug = False
             ):
 
-        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device) 
+        super().__init__(num_samples, num_genes, num_patterns, use_chisq, use_pois, NB_probs, device, init_method, debug=debug) 
 
         ## This is the same as unsupervised but with a set of fixed P and A extended by this amount ##
 
@@ -362,7 +386,12 @@ class ExponentialSingle_SSFixedSamples(ExponentialSingle_base):
         self.markers_Asoftmax = torch.zeros(self.num_fixed_patterns + self.num_patterns, self.num_genes, device=self.device, dtype=default_dtype) 
         self.markers_Psoftmax = torch.zeros(self.num_samples, self.num_fixed_patterns + self.num_patterns, device=self.device, dtype=default_dtype)
 
-    def forward(self, D, U, samp=False):
+
+        print("Updated initialized tensors to reflect fixed samples")
+        if debug:
+            debug_cuda_tensors(0) # Call this at the start to check initial memory usage
+
+    def forward(self, D, U=None, samp=False):
 
         self.iter += 1 # keep a running total of iterations
 
@@ -370,40 +399,41 @@ class ExponentialSingle_SSFixedSamples(ExponentialSingle_base):
         with pyro.plate("patterns", self.num_fixed_patterns + self.num_patterns, dim = -2):
             with pyro.plate("genes", self.num_genes, dim = -1):
                 A = pyro.sample("A", dist.Exponential(self.scale_A))
-        self.A = A
+        self.A = A.detach().clone()
 
         # Nested plates for pixel-wise independence
         with pyro.plate("samples", self.num_samples, dim=-2):
             with pyro.plate("patterns_P", self.num_patterns, dim = -1):
                 P = pyro.sample("P", dist.Exponential(self.scale_P)) # sample P from Exponential
-        self.P = P
+        self.P = P.detach().clone()
 
         P_total = torch.cat((self.fixed_P, P), dim=1)
-        self.P_total = P_total # save P_total
+        self.P_total = P_total.detach().clone() # save P_total
 
         # Matrix D_reconstucted is samples x genes; calculated as the product of P and A
         D_reconstructed = torch.matmul(P_total, A)  # (samples x genes)
-        self.D_reconstructed = D_reconstructed # save D_reconstructed
-        
-        # Calculate chi squared
-        chi2 = torch.sum((D_reconstructed-D)**2/U**2)
-        self.chi2  = chi2
-        theta = self.D_reconstructed
-        poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
-        self.pois  = poisL
+        self.D_reconstructed = D_reconstructed.detach().clone() # save D_reconstructed
 
-        if chi2 < self.best_chisq: # if this is a better chi squared, save it
-            self.best_chisq = chi2
-            self.best_chisq_iter = self.iter
-            self.best_A = A
-            self.best_P = P
-            self.best_scaleA = self.scale_A
-            self.best_scaleP = self.scale_P
+        if U is not None:
+            # Calculate chi squared
+            chi2 = torch.sum((D_reconstructed-D)**2/U**2)
+            self.chi2  = chi2.item()
+            theta = self.D_reconstructed
+            poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
+            self.pois  = poisL.item()
+
+            if chi2 < self.best_chisq: # if this is a better chi squared, save it
+                self.best_chisq = chi2.item()
+                self.best_chisq_iter = self.iter
+                self.best_A = A.detach().clone()
+                self.best_P = P.detach().clone()
+                self.best_scaleA = self.scale_A.detach().clone()
+                self.best_scaleP = self.scale_P.detach().clone()
 
 
-        # Include chi squared loss in the model
-        if self.use_chisq:
-            pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
+            # Include chi squared loss in the model
+            if self.use_chisq:
+                pyro.factor("chi2_loss", -chi2)  # Pyro's way of adding custom terms to the loss
 
         if self.use_pois:
             # Error Model Poisson
@@ -411,27 +441,30 @@ class ExponentialSingle_SSFixedSamples(ExponentialSingle_base):
             poisL = torch.sum(torch.multiply(D,torch.log(theta)))-torch.sum(theta)-torch.sum(torch.lgamma(D+1))
             # Addition to Elbow Loss - should make this at least as large as Elbow
             pyro.factor("pois.loss",10.*poisL)
+
         if samp:
             with torch.no_grad():
+                curr_A = A.detach()
+                curr_P_total = P_total.detach()
+
                 #correction = P_total.max(axis=0).values
-                correction = P_total.sum(axis=0)
-                Pn = P_total / correction
-                An = A * correction.unsqueeze(1)
+                correction = curr_P_total.sum(axis=0)
+                Pn = curr_P_total / correction
+                An = curr_A * correction.unsqueeze(1)
                 self.sum_A += An
                 self.sum_P += Pn
                 self.sum_A2 += torch.square(An)
                 self.sum_P2 += torch.square(Pn)
 
 
-
-                max_pat_per_gene = A.argmax(dim=0)  # shape: (Gene,)
-                A_binary = torch.zeros_like(A)
-                A_binary[max_pat_per_gene, torch.arange(A.shape[1])] = 1
+                max_pat_per_gene = curr_A.argmax(dim=0)  # shape: (Gene,)
+                A_binary = torch.zeros_like(curr_A)
+                A_binary[max_pat_per_gene, torch.arange(curr_A.shape[1])] = 1
                 self.markers_A += A_binary
 
-                max_pat_per_samp = P_total.argmax(dim=1)  # shape: (Samp,)
-                P_binary = torch.zeros_like(P_total)
-                P_binary[torch.arange(P_total.shape[0]), max_pat_per_samp] = 1
+                max_pat_per_samp = curr_P_total.argmax(dim=1)  # shape: (Samp,)
+                P_binary = torch.zeros_like(curr_P_total)
+                P_binary[torch.arange(curr_P_total.shape[0]), max_pat_per_samp] = 1
                 self.markers_P += P_binary
 
                 max_pat_per_gene_scaled = An.argmax(dim=0)  # shape: (Gene,)

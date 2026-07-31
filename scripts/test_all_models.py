@@ -42,11 +42,50 @@ os.chdir(outputDir) # set working directory for tensorboard logging
 
 num_steps = 500
 
+############# HELPER FUNCTIONS ##################
+def cleanup():
+    """Release pyro/GPU state between runs (mirrors the cleanup run_nmf now does internally,
+    kept here too since intermediate variables in this script can hold their own references)."""
+    pyro.clear_param_store()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def run_and_save(label, filename, **run_nmf_kwargs):
+    """Run one NMF configuration, sanity-check it, save it, and clean up -- regardless of
+    whether it raises, so one failing config doesn't leave stale param-store/GPU state for
+    the next one."""
+    print(f"\n################ {label} ################")
+    try:
+        nmf_res = run_nmf(
+            data,
+            20,  # num_patterns
+            num_burnin=num_steps,
+            num_sample_steps=num_steps,
+            spatial=True,
+            plot_dims=[5, 4],
+            use_pois=False,
+            use_chisq=False,
+            uncertainty='auto',  # explicit: 10%-of-expression uncertainty (see note below)
+            debug=False,
+            **run_nmf_kwargs,
+        )
+        #check_result(nmf_res, label)
+        nmf_res.write_h5ad(os.path.join(outputDir, filename))
+    finally:
+        if 'nmf_res' in dir():
+            del nmf_res
+        cleanup()
+
+
 ###############################################################
 ####################### RUN ALL VERSIONS ######################
 ###############################################################
 
 #%% RUN UNSUPERVISED VERSIONS
+ 
+
 
 ##### RUN 1, Unsupervised gamma #####    
 nmf_res = run_nmf(data, # data: Expects data in form of anndata 
